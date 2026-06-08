@@ -66,6 +66,16 @@ body {
   overflow: hidden;
 }
 
+/* Wraps main-content + player-bar into a flex column so the player
+   naturally shrinks the content area when it appears */
+.main-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .sidebar {
   width: 256px;
   background: var(--bg-secondary);
@@ -295,8 +305,6 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 32px;
-  padding-bottom: 160px;
-  /* space for fixed player */
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -907,11 +915,7 @@ button:disabled {
    ───────────────────────────────────────────────────────── */
 
 .player-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 140px;
+  flex: 0 0 auto;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   padding: 16px 32px;
@@ -1158,13 +1162,7 @@ button:disabled {
     display: none;
   }
 
-  .content {
-    padding-bottom: 260px;
-  }
-
   .player-bar {
-    position: relative;
-    margin-top: auto;
     height: auto;
   }
 }

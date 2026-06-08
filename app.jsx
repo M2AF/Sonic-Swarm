@@ -481,6 +481,13 @@ export default function App() {
     const track = currentAlbum.tracks[index];
     if (!track) return;
 
+    // 1. HARD RESET: Kill the zombie audio stream immediately
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute('src');
+      audioRef.current.load();
+    }
+    setIsPlaying(false);
     setCurrentTrackIndex(index);
     setPlaybackProgress(0);
     sonicSwarm.setStreamStatus('resolving');
@@ -488,27 +495,35 @@ export default function App() {
     try {
       // ── Strategy 1: Jump within the SAME multi-track torrent ──
       if (activeSourcePreferences.infoHash && sonicSwarm.currentTorrentFiles?.length > 0) {
-        const fileMatchIndex = sonicSwarm.currentTorrentFiles.findIndex(fileName =>
-          fileName.toLowerCase().includes(track.title.toLowerCase())
-        );
+        // Smarter matching: strip special characters to find the right track
+        const cleanTrackTitle = track.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        const fileMatchIndex = sonicSwarm.currentTorrentFiles.findIndex(fileName => {
+          const cleanFileName = fileName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return cleanFileName.includes(cleanTrackTitle);
+        });
 
         if (fileMatchIndex !== -1) {
-          console.log(`[SKIP] Found track inside current album pack at file index: ${fileMatchIndex}`);
-          sonicSwarm.setCurrentAudioIndex(fileMatchIndex);
-          sonicSwarm.setStreamStatus('ready');
-          setIsPlaying(true);
+          console.log(`[SKIP] Found "${track.title}" in active torrent at file index: ${fileMatchIndex}`);
 
-          // Force the audio element to reload the new file index
-          if (audioRef.current) {
-            audioRef.current.load();
-            setTimeout(() => audioRef.current.play().catch(e => console.log('Autoplay deferred:', e.message)), 500);
-          }
+          sonicSwarm.setCurrentAudioIndex(fileMatchIndex);
+
+          // Defer slightly to let React update the <audio key={...}> element
+          setTimeout(() => {
+            sonicSwarm.setStreamStatus('ready');
+            setIsPlaying(true);
+            if (audioRef.current) {
+              audioRef.current.load();
+              audioRef.current.play().catch(e => console.warn('Autoplay blocked:', e));
+            }
+          }, 150);
           return;
         }
       }
 
-      // ── Strategy 2: Fetch & rank fresh sources ──
-      console.log(`[SKIP] Searching new sources for: ${track.title}`);
+      // ── Strategy 2: Not in current torrent — fetch new sources ──
+      console.log(`[SKIP] Searching new swarms for: ${track.title}`);
+      sonicSwarm.resetPlayback(); // Purge old torrent context before fetching
 
       const response = await fetch('http://localhost:9191/api/sources', {
         method: 'POST',
@@ -522,12 +537,10 @@ export default function App() {
 
       const sources = response.sources || [];
       if (sources.length === 0) {
-        console.warn('[SKIP] No sources found — stopping');
-        sonicSwarm.setStreamStatus('error');
-        return;
+        throw new Error("No sources found for this track.");
       }
 
-      // Rank: quality match first, then seeders
+      // Rank by quality preference first, then by seeders
       const sortedSources = [...sources].sort((a, b) => {
         const aQualityMatch = a.quality === activeSourcePreferences.quality ? 1 : 0;
         const bQualityMatch = b.quality === activeSourcePreferences.quality ? 1 : 0;
@@ -536,9 +549,9 @@ export default function App() {
       });
 
       const bestSource = sortedSources[0];
-      console.log(`[SKIP] Auto-selecting: ${bestSource.fileName} (${bestSource.quality}, ${bestSource.seeders} seeds)`);
+      console.log(`[SKIP] Engaging swarm: ${bestSource.fileName}`);
 
-      // Update sticky preferences for the new source
+      // Update sticky preferences
       const match = bestSource.magnet?.match(/btih:([a-zA-Z0-9]+)/);
       setActiveSourcePreferences({
         infoHash: match ? match[1].toLowerCase() : null,
@@ -546,11 +559,12 @@ export default function App() {
         sourceName: bestSource.source
       });
 
+      // Pass track.title so backend resolves the correct internal file index
       await sonicSwarm.startStream(bestSource.magnet, track.title);
       setIsPlaying(true);
 
     } catch (error) {
-      console.error('[SKIP] Failed:', error);
+      console.error('[SKIP] Failed:', error.message);
       sonicSwarm.setStreamStatus('error');
     }
   };
@@ -575,12 +589,11 @@ export default function App() {
     setCurrentTrackIndex(index);
     setPlaybackProgress(0);
 
-    // Sync context audio index for magnet-pasted albums
+    // Only sync if we KNOW the exact torrent file index (magnet-pasted albums).
+    // Never guess — let the scraper/backend dictate the correct index.
     const track = currentAlbum.tracks[index];
-    if (track._fileIndex !== undefined) {
+    if (track && track._fileIndex !== undefined) {
       sonicSwarm.setCurrentAudioIndex(track._fileIndex);
-    } else {
-      sonicSwarm.setCurrentAudioIndex(index);
     }
   };
 
@@ -633,13 +646,17 @@ export default function App() {
       }
     }
 
-    // Preserve artwork URL from search results
+    // Force standardization: find the image whatever the API called it,
+    // and assign it to BOTH keys so the UI can't miss it.
+    const resolvedArt = album.artworkUrl600 || album.artworkUrl100 || album.artworkUrl || album.coverUrl;
+
     setCurrentAlbum({
       ...album,
-      artworkUrl: album.artworkUrl600 || album.artworkUrl100 || album.artworkUrl || album.coverUrl
+      artworkUrl: resolvedArt,
+      coverUrl: resolvedArt
     });
     setCurrentTrackIndex(0);
-    setIsPlaying(true);
+    setIsPlaying(false);
     setView('album');
   };
 
@@ -698,6 +715,36 @@ export default function App() {
         </nav>
 
         <div className="sidebar-footer">
+          {/* Mini-Player — docks at the bottom of the sidebar */}
+          {currentAlbum && (
+            <div className="mini-player">
+              <div className="mini-player-art">
+                {currentAlbum.artworkUrl ? (
+                  <img src={currentAlbum.artworkUrl} alt="" />
+                ) : (
+                  <Music size={20} />
+                )}
+              </div>
+              <div className="mini-player-info">
+                <p className="mini-player-track">{currentAlbum.tracks[currentTrackIndex].title}</p>
+                <p className="mini-player-artist">{currentAlbum.artist}</p>
+              </div>
+              <div className="mini-player-controls">
+                <button onClick={() => handleSkip('prev')} disabled={currentTrackIndex === 0} title="Previous">
+                  <SkipBack size={12} />
+                </button>
+                <button onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+                  {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+                </button>
+                <button onClick={() => handleSkip('next')} disabled={currentTrackIndex >= (currentAlbum.tracks.length - 1)} title="Next">
+                  <SkipForward size={12} />
+                </button>
+              </div>
+              <div className="mini-player-progress">
+                <div className="mini-progress-fill" style={{ width: `${playbackProgress}%` }} />
+              </div>
+            </div>
+          )}
           <div className="stats">
             <div className="stat">
               <HardDrive size={14} />
@@ -901,97 +948,17 @@ export default function App() {
           )}
         </div>
       </main>
+    </div>
 
-      {/* PLAYER BAR (Fixed at bottom) */}
-      {
-        currentAlbum && (
-          <footer className="player-bar">
-            {/* Track Info */}
-            <div className="player-track-info">
-              <div className="track-art">
-                <Music size={28} />
-              </div>
-              <div className="track-meta">
-                <h4>{currentAlbum.tracks[currentTrackIndex].title}</h4>
-                <p>{currentAlbum.artist}</p>
-              </div>
-            </div>
-
-            {/* Controls */}
-            <div className="player-controls">
-              <div className="control-buttons">
-                <button
-                  className="control-btn"
-                  onClick={() => handleSkip('prev')}
-                  disabled={currentTrackIndex === 0}
-                >
-                  <SkipBack size={20} />
-                </button>
-
-                <button
-                  className="control-btn play-btn"
-                  onClick={handlePlayPause}
-                  disabled={!currentTorrentData?.torrents?.length}
-                >
-                  {isPlaying ? <Pause size={24} /> : <Play size={24} />}
-                </button>
-
-                <button
-                  className="control-btn"
-                  onClick={() => handleSkip('next')}
-                  disabled={currentTrackIndex === currentAlbum.tracks.length - 1}
-                >
-                  <SkipForward size={20} />
-                </button>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="progress-section">
-                <span className="time">{formatTime(currentTime)}</span>
-                <div className="progress-bar" onClick={handleSeek}>
-                  <div className="progress-fill" style={{ width: `${playbackProgress}%` }} />
-                </div>
-                <span className="time">
-                  {formatTime(
-                    audioRef.current?.duration ||
-                    parseDuration(currentAlbum.tracks[currentTrackIndex].duration)
-                  )}
-                </span>
-              </div>
-            </div>
-
-            {/* Swarm Stats */}
-            <div className="player-stats">
-              <div className="stat">
-                <Users size={16} />
-                <span>{sonicSwarm.swarmStats.totalPeers} peers</span>
-              </div>
-              <div className="stat">
-                <Zap size={16} />
-                <span className="download">
-                  ↓ {sonicSwarm.swarmStats.totalDownloadSpeed} MB/s
-                </span>
-              </div>
-              <div className="stat">
-                <Sliders size={16} />
-                <span>
-                  {sonicSwarm.swarmStats.swarms[0]?.progress || 0}% buffered
-                </span>
-              </div>
-            </div>
-          </footer>
-        )
-      }
-
-      {/* Hidden Audio Element */}
-      <audio
-        ref={audioRef}
-        onTimeUpdate={handleTimeUpdate}
-        onEnded={handleEnded}
-        src={sonicSwarm.currentStreamId ? sonicSwarm.getFileStreamUrl(sonicSwarm.currentAudioIndex || 0) : ""}
-        crossOrigin="anonymous"
-        key={`${sonicSwarm.currentStreamId}-${sonicSwarm.currentAudioIndex}`}
-      />
+      {/* Hidden Audio Element */ }
+  <audio
+    ref={audioRef}
+    onTimeUpdate={handleTimeUpdate}
+    onEnded={handleEnded}
+    src={sonicSwarm.currentStreamId ? sonicSwarm.getFileStreamUrl(sonicSwarm.currentAudioIndex || 0) : ""}
+    crossOrigin="anonymous"
+    key={`${sonicSwarm.currentStreamId}-${sonicSwarm.currentAudioIndex}`}
+  />
     </div >
   );
 }

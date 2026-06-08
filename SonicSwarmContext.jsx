@@ -362,10 +362,23 @@ export const SonicSwarmProvider = ({ children }) => {
   }, [currentStreamId]);
 
   /**
-   * Clear cache (for manual refresh)
-   */
+ * Clear cache (for manual refresh)
+ */
   const clearCache = useCallback(() => {
     setTorrentCache({});
+  }, []);
+
+  /**
+   * Kill switch — completely purge the current stream state.
+   * Prevents zombie loops where a failed stream resurrects the previous one.
+   */
+  const resetPlayback = useCallback(() => {
+    setCurrentStreamId(null);
+    setCurrentMagnet(null);
+    setCurrentAudioIndex(0);
+    setCurrentTorrentName('');
+    setCurrentTorrentFiles([]);
+    setStreamStatus('idle');
   }, []);
 
   // ─────────────────────────────────────────────────────────
@@ -401,6 +414,7 @@ export const SonicSwarmProvider = ({ children }) => {
     startStream,
     stopStream,
     getFileStreamUrl,
+    resetPlayback,
 
     // Resolution
     resolveTorrent,
