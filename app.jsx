@@ -715,36 +715,6 @@ export default function App() {
         </nav>
 
         <div className="sidebar-footer">
-          {/* Mini-Player — docks at the bottom of the sidebar */}
-          {currentAlbum && (
-            <div className="mini-player">
-              <div className="mini-player-art">
-                {currentAlbum.artworkUrl ? (
-                  <img src={currentAlbum.artworkUrl} alt="" />
-                ) : (
-                  <Music size={20} />
-                )}
-              </div>
-              <div className="mini-player-info">
-                <p className="mini-player-track">{currentAlbum.tracks[currentTrackIndex].title}</p>
-                <p className="mini-player-artist">{currentAlbum.artist}</p>
-              </div>
-              <div className="mini-player-controls">
-                <button onClick={() => handleSkip('prev')} disabled={currentTrackIndex === 0} title="Previous">
-                  <SkipBack size={12} />
-                </button>
-                <button onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
-                  {isPlaying ? <Pause size={14} /> : <Play size={14} />}
-                </button>
-                <button onClick={() => handleSkip('next')} disabled={currentTrackIndex >= (currentAlbum.tracks.length - 1)} title="Next">
-                  <SkipForward size={12} />
-                </button>
-              </div>
-              <div className="mini-player-progress">
-                <div className="mini-progress-fill" style={{ width: `${playbackProgress}%` }} />
-              </div>
-            </div>
-          )}
           <div className="stats">
             <div className="stat">
               <HardDrive size={14} />
@@ -948,17 +918,47 @@ export default function App() {
           )}
         </div>
       </main>
-    </div>
 
-      {/* Hidden Audio Element */ }
-  <audio
-    ref={audioRef}
-    onTimeUpdate={handleTimeUpdate}
-    onEnded={handleEnded}
-    src={sonicSwarm.currentStreamId ? sonicSwarm.getFileStreamUrl(sonicSwarm.currentAudioIndex || 0) : ""}
-    crossOrigin="anonymous"
-    key={`${sonicSwarm.currentStreamId}-${sonicSwarm.currentAudioIndex}`}
-  />
-    </div >
+      {/* Floating Mini-Player — bottom-left of screen */}
+      {currentAlbum && (
+        <div className="floating-mini-player">
+          <div className="mini-player-art">
+            {currentAlbum.artworkUrl ? (
+              <img src={currentAlbum.artworkUrl} alt="" />
+            ) : (
+              <Music size={22} />
+            )}
+          </div>
+          <div className="mini-player-info">
+            <p className="mini-player-track">{currentAlbum.tracks[currentTrackIndex].title}</p>
+            <p className="mini-player-artist">{currentAlbum.artist}</p>
+          </div>
+          <div className="mini-player-controls">
+            <button onClick={() => handleSkip('prev')} disabled={currentTrackIndex === 0} title="Previous">
+              <SkipBack size={14} />
+            </button>
+            <button onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+            <button onClick={() => handleSkip('next')} disabled={currentTrackIndex >= (currentAlbum.tracks.length - 1)} title="Next">
+              <SkipForward size={14} />
+            </button>
+          </div>
+          <div className="mini-player-progress">
+            <div className="mini-progress-fill" style={{ width: `${playbackProgress}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Hidden Audio Element */}
+      <audio
+        ref={audioRef}
+        onTimeUpdate={handleTimeUpdate}
+        onEnded={handleEnded}
+        src={sonicSwarm.currentStreamId ? sonicSwarm.getFileStreamUrl(sonicSwarm.currentAudioIndex || 0) : ""}
+        crossOrigin="anonymous"
+        key={`${sonicSwarm.currentStreamId}-${sonicSwarm.currentAudioIndex}`}
+      />
+    </div>
   );
 }

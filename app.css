@@ -66,16 +66,6 @@ body {
   overflow: hidden;
 }
 
-/* Wraps main-content + player-bar into a flex column so the player
-   naturally shrinks the content area when it appears */
-.main-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .sidebar {
   width: 256px;
   background: var(--bg-secondary);
@@ -188,6 +178,9 @@ body {
   flex-direction: column;
   background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
   min-height: 0;
+  /* Critical: allows flex children to shrink */
+  overflow: hidden;
+  /* Prevents double scrollbars */
 }
 
 .header {
@@ -911,167 +904,137 @@ button:disabled {
 }
 
 /* ─────────────────────────────────────────────────────────
-   PLAYER BAR (Fixed)
+   FLOATING MINI-PLAYER (bottom-left of screen)
    ───────────────────────────────────────────────────────── */
 
-.player-bar {
-  flex: 0 0 auto;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  padding: 16px 32px;
-  display: grid;
-  grid-template-columns: 240px 1fr 240px;
-  gap: 32px;
-  align-items: center;
+.floating-mini-player {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
   z-index: 100;
-}
-
-.player-track-info {
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-width: 0;
+  gap: 10px;
+  min-width: 280px;
+  max-width: 360px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  animation: slideUp 0.3s ease;
 }
 
-.track-art {
-  width: 48px;
-  height: 48px;
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.floating-mini-player:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.floating-mini-player .mini-player-art {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-  border-radius: 8px;
-  flex-shrink: 0;
   color: rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
 }
 
-.track-meta {
+.floating-mini-player .mini-player-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.floating-mini-player .mini-player-info {
+  flex: 1;
   min-width: 0;
-}
-
-.track-meta h4 {
-  font-size: 14px;
-  font-weight: 600;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.track-meta p {
+.floating-mini-player .mini-player-track {
   font-size: 12px;
-  color: var(--text-tertiary);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.floating-mini-player .mini-player-artist {
+  font-size: 11px;
+  color: var(--text-tertiary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
 }
 
-.player-controls {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.control-buttons {
+.floating-mini-player .mini-player-controls {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.control-btn {
+.floating-mini-player .mini-player-controls button {
   background: transparent;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 8px;
-  border-radius: 8px;
-  transition: all var(--transition);
+  padding: 4px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.2s;
 }
 
-.control-btn:hover:not(:disabled) {
+.floating-mini-player .mini-player-controls button:hover:not(:disabled) {
   color: var(--text-primary);
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.control-btn:disabled {
+.floating-mini-player .mini-player-controls button:disabled {
   opacity: 0.3;
-  cursor: not-allowed;
+  cursor: default;
 }
 
-.control-btn.play-btn {
-  width: 48px;
-  height: 48px;
-  background: var(--accent);
-  color: white;
-}
-
-.control-btn.play-btn:hover:not(:disabled) {
-  background: var(--accent-dark);
-}
-
-.progress-section {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-}
-
-.time {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  font-family: 'Courier New', monospace;
-  min-width: 35px;
-}
-
-.progress-bar {
-  flex: 1;
-  height: 4px;
-  background: var(--bg-tertiary);
-  border-radius: 2px;
-  cursor: pointer;
+.floating-mini-player .mini-player-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 0 0 14px 14px;
   overflow: hidden;
-  transition: height var(--transition);
 }
 
-.progress-bar:hover {
-  height: 6px;
-}
-
-.progress-fill {
+.floating-mini-player .mini-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
-  border-radius: 2px;
-  transition: width 0.1s linear;
-}
-
-.player-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  text-align: right;
-}
-
-.stat {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.stat svg {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
-  flex-shrink: 0;
-}
-
-.stat .download {
-  color: var(--success);
+  background: var(--accent);
+  border-radius: 0 0 14px 14px;
+  transition: width 0.15s linear;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -1079,16 +1042,11 @@ button:disabled {
    ───────────────────────────────────────────────────────── */
 
 @media (max-width: 1200px) {
-  .player-bar {
-    grid-template-columns: 1fr;
-    gap: 16px;
-    height: auto;
-  }
-
-  .player-stats {
-    flex-direction: row;
-    justify-content: center;
-    text-align: center;
+  .floating-mini-player {
+    min-width: 240px;
+    max-width: 300px;
+    gap: 6px;
+    padding: 8px 10px;
   }
 }
 
@@ -1160,10 +1118,6 @@ button:disabled {
 
   .track-status {
     display: none;
-  }
-
-  .player-bar {
-    height: auto;
   }
 }
 
