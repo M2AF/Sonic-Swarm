@@ -847,10 +847,49 @@ export default function App() {
                   ← Back to Library
                 </button>
 
-                <div className="album-hero">
-                  <div className="album-cover">
+                <div
+                  className="album-hero"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: '24px',
+                    marginBottom: '32px',
+                    height: '200px'
+                  }}
+                >
+                  <div
+                    className="album-cover"
+                    style={{
+                      width: '200px',
+                      height: '200px',
+                      minWidth: '200px',
+                      maxWidth: '200px',
+                      minHeight: '200px',
+                      maxHeight: '200px',
+                      flexShrink: 0,
+                      flexGrow: 0,
+                      borderRadius: '12px',
+                      overflow: 'hidden',
+                      background: 'linear-gradient(135deg, #6366f1 0%, #0ea5e9 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
                     {currentAlbum.artworkUrl ? (
-                      <img src={currentAlbum.artworkUrl} alt={currentAlbum.title} className="album-art-large" />
+                      <img
+                        src={currentAlbum.artworkUrl}
+                        alt={currentAlbum.title}
+                        style={{
+                          width: '200px',
+                          height: '200px',
+                          objectFit: 'cover',
+                          borderRadius: '12px',
+                          display: 'block',
+                          flexShrink: 0
+                        }}
+                      />
                     ) : (
                       <Disc size={128} />
                     )}

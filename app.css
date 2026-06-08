@@ -535,9 +535,10 @@ button:disabled {
 
 .album-hero {
   display: flex;
-  gap: 40px;
-  align-items: flex-end;
-  margin-bottom: 48px;
+  flex-direction: row;
+  gap: 24px;
+  align-items: center;
+  margin-bottom: 32px;
 }
 
 /* Back button */
@@ -565,23 +566,29 @@ button:disabled {
 
 /* Album cover — matches JSX className */
 .album-cover {
-  width: 240px;
-  height: 240px;
+  width: 200px;
+  height: 200px;
+  min-width: 200px;
+  max-width: 200px;
+  min-height: 200px;
+  max-height: 200px;
+  flex-shrink: 0;
+  flex-grow: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-  border-radius: 16px;
-  flex-shrink: 0;
+  border-radius: 12px;
   color: rgba(255, 255, 255, 0.2);
   overflow: hidden;
 }
 
 .album-art-large {
-  width: 100%;
-  height: 100%;
+  width: 200px;
+  height: 200px;
   object-fit: cover;
-  border-radius: 16px;
+  border-radius: 12px;
+  display: block;
 }
 
 .album-info {
@@ -1166,14 +1173,23 @@ button:disabled {
   }
 
   .album-hero {
-    flex-direction: column;
-    gap: 24px;
-    align-items: flex-start;
+    flex-direction: row;
+    gap: 16px;
+    align-items: center;
   }
 
   .album-cover {
-    width: 160px;
-    height: 160px;
+    width: 120px;
+    height: 120px;
+    min-width: 120px;
+    max-width: 120px;
+    min-height: 120px;
+    max-height: 120px;
+  }
+
+  .album-art-large {
+    width: 120px;
+    height: 120px;
   }
 
   .album-info h1 {

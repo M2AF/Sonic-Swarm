@@ -17,6 +17,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
+import { createServer as createViteServer } from 'vite';
 
 // ─────────────────────────────────────────────────────────
 // SETUP
@@ -1750,27 +1751,30 @@ app.get('/api/health', (req, res) => {
 // STATIC FILE SERVING (Frontend)
 // ─────────────────────────────────────────────────────────
 
-// Serve the dist/ directory (Vite-built React app) if it exists,
-// otherwise fall back to public/ (vanilla HTML/JS frontend)
+const isProduction = process.env.NODE_ENV === 'production';
 const distDir = path.join(rootDir, 'dist');
 const publicDir = path.join(rootDir, 'public');
-const frontendDir = fs.existsSync(path.join(distDir, 'index.html')) ? distDir : publicDir;
-app.use(express.static(frontendDir));
-console.log(`📂 Serving frontend from: ${frontendDir === distDir ? 'dist/ (React build)' : 'public/ (vanilla)'}`);
 
-// SPA fallback: serve index.html for all non-API routes
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    const indexPath = path.join(frontendDir, 'index.html');
-    if (fs.existsSync(indexPath)) {
-      res.sendFile(indexPath);
+// Production mode: serve pre-built files from dist/
+if (isProduction) {
+  const frontendDir = fs.existsSync(path.join(distDir, 'index.html')) ? distDir : publicDir;
+  app.use(express.static(frontendDir));
+  console.log(`📂 Serving frontend from: ${frontendDir === distDir ? 'dist/ (React build)' : 'public/ (vanilla)'}`);
+
+  // SPA fallback: serve index.html for all non-API routes (production only)
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      const indexPath = path.join(frontendDir, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('Frontend not built. Run: npm run build:ui');
+      }
     } else {
-      res.status(404).send('Frontend not built. Run: npm run build:ui');
+      res.status(404).json({ success: false, error: 'API endpoint not found' });
     }
-  } else {
-    res.status(404).json({ success: false, error: 'API endpoint not found' });
-  }
-});
+  });
+}
 
 // ─────────────────────────────────────────────────────────
 // SERVER STARTUP
@@ -1778,12 +1782,32 @@ app.get('*', (req, res) => {
 
 initializeDatabase();
 
-const server = app.listen(PORT, () => {
-  console.log(`
+async function startServer() {
+  // Development mode: attach Vite's dev server as middleware
+  // This gives you HMR, JSX transform, and instant reload — no build step needed.
+  if (!isProduction) {
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+      console.log('⚡ Vite dev server attached — HMR + JSX transform active');
+    } catch (e) {
+      console.error('⚠ Failed to start Vite dev server:', e.message);
+      console.log('   Falling back to raw public/ directory...');
+      app.use(express.static(publicDir));
+    }
+  }
+
+  const server = app.listen(PORT, () => {
+    const mode = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';
+    console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║        🎵 SONICSWARM P2P BACKEND ONLINE 🎵                 ║
 ╠════════════════════════════════════════════════════════════╣
 ║                                                            ║
+║  Mode:          ${mode.padEnd(40)}║
 ║  Frontend:      http://localhost:${PORT}                      ║
 ║  API:           http://localhost:${PORT}/api                  ║
 ║  Database:      ${dbPath}
@@ -1803,18 +1827,21 @@ const server = app.listen(PORT, () => {
 ║    GET    /api/health            → Server status            ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
-  `);
-});
+    `);
+  });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down...');
-  for (const engine of torrentEngines.values()) {
-    try { engine.destroy(() => { }); } catch (e) { /* ok */ }
-  }
-  try { db.close(); } catch (e) { /* ok */ }
-  server.close();
-  process.exit(0);
-});
+  // Graceful shutdown
+  process.on('SIGINT', () => {
+    console.log('\n🛑 Shutting down...');
+    for (const engine of torrentEngines.values()) {
+      try { engine.destroy(() => { }); } catch (e) { /* ok */ }
+    }
+    try { db.close(); } catch (e) { /* ok */ }
+    server.close();
+    process.exit(0);
+  });
+}
+
+startServer();
 
 export default app;
