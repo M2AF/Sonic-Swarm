@@ -323,6 +323,161 @@ button:disabled {
 }
 
 /* ─────────────────────────────────────────────────────────
+   DISCOVER VIEW (iTunes-powered)
+   ───────────────────────────────────────────────────────── */
+
+.discover-section {
+  margin-bottom: 48px;
+}
+
+.discover-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: var(--text-primary);
+}
+
+.discover-section-title svg {
+  color: var(--accent);
+}
+
+.discover-album-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 20px;
+}
+
+.discover-album-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.discover-album-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-4px);
+  background: var(--bg-tertiary);
+}
+
+.discover-album-art {
+  aspect-ratio: 1;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+
+.discover-album-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.discover-album-info {
+  padding: 12px;
+}
+
+.discover-album-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+
+.discover-album-artist {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discover-album-year {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+/* Popular Singles — compact grid */
+.discover-singles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.discover-single-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.discover-single-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+  transform: translateX(4px);
+}
+
+.discover-single-art {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.discover-single-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.discover-single-info {
+  min-width: 0;
+}
+
+.discover-single-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+
+.discover-single-artist {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────────────────────
    DISCOVER CATALOG VIEW
    ───────────────────────────────────────────────────────── */
 
@@ -1165,6 +1320,15 @@ button:disabled {
 
   .search-bar {
     max-width: 100%;
+  }
+
+  .discover-album-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 12px;
+  }
+
+  .discover-singles-grid {
+    grid-template-columns: 1fr;
   }
 
   .album-grid {

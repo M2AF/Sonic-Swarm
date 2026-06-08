@@ -26,6 +26,11 @@ export const SonicSwarmProvider = ({ children }) => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState(null);
 
+  // Discovery (iTunes-powered homepage)
+  const [discoveryData, setDiscoveryData] = useState({ albums: [], singles: [] });
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState(null);
+
   // Playback
   const [currentStreamId, setCurrentStreamId] = useState(null);
   const [currentAudioIndex, setCurrentAudioIndex] = useState(0);
@@ -142,8 +147,8 @@ export const SonicSwarmProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────────
 
   /**
-   * Search for albums by query
-   */
+ * Search for albums by query
+ */
   const searchAlbums = useCallback(async (query) => {
     if (!query || query.length < 2) {
       setSearchResults([]);
@@ -165,6 +170,34 @@ export const SonicSwarmProvider = ({ children }) => {
       setSearchResults([]);
     } finally {
       setSearchLoading(false);
+    }
+  }, []);
+
+  /**
+   * Fetch discovery data from iTunes-powered backend
+   * Returns { albums: [...], singles: [...] } for the Discover homepage
+   */
+  const fetchDiscovery = useCallback(async () => {
+    setDiscoveryLoading(true);
+    setDiscoveryError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/discover`);
+      if (!response.ok) throw new Error('Discovery fetch failed');
+
+      const data = await response.json();
+      setDiscoveryData({
+        albums: data.albums || [],
+        singles: data.singles || []
+      });
+      return data;
+    } catch (error) {
+      console.error('Discovery fetch error:', error);
+      setDiscoveryError(error.message);
+      setDiscoveryData({ albums: [], singles: [] });
+      throw error;
+    } finally {
+      setDiscoveryLoading(false);
     }
   }, []);
 
@@ -403,6 +436,12 @@ export const SonicSwarmProvider = ({ children }) => {
     searchLoading,
     searchError,
     searchAlbums,
+
+    // Discovery
+    discoveryData,
+    discoveryLoading,
+    discoveryError,
+    fetchDiscovery,
 
     // Sources (Stremio-style)
     fetchSources,

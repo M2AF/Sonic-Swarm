@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square, Compass } from 'lucide-react';
 import { useSonicSwarm } from './SonicSwarmContext';
 import './App.css';
 
@@ -344,6 +344,15 @@ export default function App() {
   // ─────────────────────────────────────────────────────────
   // EFFECTS
   // ─────────────────────────────────────────────────────────
+
+  /**
+   * Auto-fetch discovery data when user navigates to Discover tab
+   */
+  useEffect(() => {
+    if (view === 'discover' && sonicSwarm.discoveryData.albums.length === 0 && sonicSwarm.discoveryData.singles.length === 0) {
+      sonicSwarm.fetchDiscovery();
+    }
+  }, [view, sonicSwarm.fetchDiscovery]);
 
   /**
  * When stream changes, wire up the audio element and wait for
@@ -730,6 +739,13 @@ export default function App() {
 
         <nav className="sidebar-nav">
           <button
+            className={`nav-button ${view === 'discover' ? 'active' : ''}`}
+            onClick={() => setView('discover')}
+          >
+            <Compass size={18} />
+            <span>Discover</span>
+          </button>
+          <button
             className={`nav-button ${view === 'library' ? 'active' : ''}`}
             onClick={() => setView('library')}
           >
@@ -803,6 +819,112 @@ export default function App() {
 
         {/* CONTENT AREA */}
         <div className="content">
+          {/* Discover View — iTunes-powered popular charts */}
+          {view === 'discover' && (
+            <div className="discover-view">
+              {sonicSwarm.discoveryLoading ? (
+                <div className="loading">
+                  <Loader size={24} className="spinning" />
+                  <span>Loading popular charts...</span>
+                </div>
+              ) : sonicSwarm.discoveryError ? (
+                <div className="error-badge" style={{ margin: '32px auto', width: 'fit-content' }}>
+                  <AlertCircle size={16} />
+                  <span>{sonicSwarm.discoveryError}</span>
+                </div>
+              ) : (
+                <>
+                  {/* Popular Albums Section */}
+                  <section className="discover-section">
+                    <h2 className="discover-section-title">
+                      <Disc size={20} />
+                      Popular Albums
+                    </h2>
+                    <div className="discover-album-grid">
+                      {sonicSwarm.discoveryData.albums.map((album) => (
+                        <div
+                          key={album.id}
+                          className="discover-album-card"
+                          onClick={() => {
+                            handlePlayAlbum(album);
+                          }}
+                        >
+                          <div className="discover-album-art">
+                            {album.cover ? (
+                              <img src={album.cover} alt={album.title} loading="lazy" />
+                            ) : (
+                              <Disc size={64} />
+                            )}
+                          </div>
+                          <div className="discover-album-info">
+                            <h3 className="discover-album-title" title={album.title}>
+                              {album.title}
+                            </h3>
+                            <p className="discover-album-artist" title={album.artist}>
+                              {album.artist}
+                            </p>
+                            {album.year && (
+                              <span className="discover-album-year">{album.year}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  {/* Popular Singles Section */}
+                  <section className="discover-section">
+                    <h2 className="discover-section-title">
+                      <Radio size={20} />
+                      Popular Singles
+                    </h2>
+                    <div className="discover-singles-grid">
+                      {sonicSwarm.discoveryData.singles.map((single) => (
+                        <div
+                          key={single.id}
+                          className="discover-single-card"
+                          onClick={() => {
+                            // Build a one-track "album" so handlePlayAlbum works
+                            const singleAlbum = {
+                              id: single.id,
+                              title: single.title,
+                              artist: single.artist,
+                              coverUrl: single.cover,
+                              artworkUrl: single.cover,
+                              year: null,
+                              tracks: [{
+                                id: `${single.id}-t1`,
+                                title: single.title,
+                                duration: '0:00'
+                              }]
+                            };
+                            handlePlayAlbum(singleAlbum);
+                          }}
+                        >
+                          <div className="discover-single-art">
+                            {single.cover ? (
+                              <img src={single.cover} alt={single.title} loading="lazy" />
+                            ) : (
+                              <Music size={48} />
+                            )}
+                          </div>
+                          <div className="discover-single-info">
+                            <h4 className="discover-single-title" title={single.title}>
+                              {single.title}
+                            </h4>
+                            <p className="discover-single-artist" title={single.artist}>
+                              {single.artist}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Library View */}
           {view === 'library' && (
             <div className="library-view">

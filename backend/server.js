@@ -1485,72 +1485,181 @@ app.get('/api/torrent/:streamId/file/:fileIndex', async (req, res) => {
 
 /**
  * GET /api/discover
- * Stremio-style discovery homepage — returns a curated list of albums
- * with metadata and cover art from MusicBrainz + Cover Art Archive.
+ * iTunes-powered discovery homepage — fetches real-time popular charts
+ * from the iTunes RSS feeds. Returns two sections: Popular Albums + Popular Singles.
  * 
- * Query params:
- *   genre  - filter by genre tag (optional, e.g. 'rock', 'hip-hop', 'electronic')
- *   page   - pagination offset (default 0)
- *   limit  - results per page (default 20)
+ * No API key required. iTunes RSS feeds are free and public.
  */
 app.get('/api/discover', async (req, res) => {
-  const { genre, page = 0, limit = 20 } = req.query;
-
   try {
-    let results = [];
+    // Fetch both feeds in parallel
+    const [albumsResp, songsResp] = await Promise.allSettled([
+      axios.get('https://itunes.apple.com/us/rss/topalbums/limit=25/json', { timeout: 8000 }),
+      axios.get('https://itunes.apple.com/us/rss/topsongs/limit=25/json', { timeout: 8000 })
+    ]);
 
-    // 1. ALWAYS return cached results instantly
-    const cachedDiscoveries = db.prepare(`
-      SELECT * FROM albums 
-      WHERE cover_url IS NOT NULL
-      ORDER BY cached_at DESC 
-      LIMIT ?
-    `).all(parseInt(limit));
+    // ── Normalize Albums ──
+    const albums = [];
+    if (albumsResp.status === 'fulfilled' && albumsResp.value?.data?.feed?.entry) {
+      const seen = new Set();
+      for (const entry of albumsResp.value.data.feed.entry) {
+        const collectionId = entry.id?.attributes?.['im:id'];
+        const artist = entry['im:artist']?.label || 'Unknown';
+        const title = entry['im:name']?.label || 'Unknown';
+        const key = `${artist}|${title}`.toLowerCase();
+        if (!collectionId || seen.has(key)) continue;
+        seen.add(key);
 
-    if (cachedDiscoveries.length > 0) {
-      results = cachedDiscoveries.map(a => ({
-        id: a.id,
-        title: a.title,
-        artist: a.artist,
-        year: a.year,
-        coverUrl: a.cover_url,
-        trackCount: a.track_count,
-        mbid: a.mbid,
-        source: 'cache'
-      }));
+        // Get highest-res artwork (last image in the array is largest)
+        const images = entry['im:image'] || [];
+        const bestImage = images[images.length - 1]?.label || '';
+        const cover = bestImage.replace(/\/\d+x\d+bb/, '/600x600bb');
+
+        albums.push({
+          id: `itunes_${collectionId}`,
+          title,
+          artist,
+          cover,
+          type: 'album',
+          year: entry['im:releaseDate']?.label
+            ? new Date(entry['im:releaseDate'].label).getFullYear()
+            : null,
+          trackCount: entry['im:itemCount']?.label
+            ? parseInt(entry['im:itemCount'].label)
+            : null
+        });
+
+        // Cache in DB for fast repeat lookups
+        db.prepare(
+          `INSERT OR IGNORE INTO albums (id, title, artist, year, cover_url, track_count)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(`itunes_${collectionId}`, title, artist,
+          entry['im:releaseDate']?.label ? new Date(entry['im:releaseDate'].label).getFullYear() : null,
+          cover,
+          entry['im:itemCount']?.label ? parseInt(entry['im:itemCount'].label) : null
+        );
+      }
     }
 
-    // 2. If cache is sparse or old, refresh in background
-    //    (but return cache immediately to the user)
-    const needsRefresh = cachedDiscoveries.length < 5;
+    // ── Normalize Singles ──
+    const singles = [];
+    if (songsResp.status === 'fulfilled' && songsResp.value?.data?.feed?.entry) {
+      const seen = new Set();
+      for (const entry of songsResp.value.data.feed.entry) {
+        const trackId = entry.id?.attributes?.['im:id'];
+        const artist = entry['im:artist']?.label || 'Unknown';
+        const title = entry['im:name']?.label || 'Unknown';
+        const key = `${artist}|${title}`.toLowerCase();
+        if (!trackId || seen.has(key)) continue;
+        seen.add(key);
 
-    if (needsRefresh) {
-      // Fire-and-forget background refresh
-      refreshDiscoveryCache(parseInt(limit) * 3).catch(e =>
-        console.error('Background discover refresh failed:', e.message)
-      );
+        const images = entry['im:image'] || [];
+        const bestImage = images[images.length - 1]?.label || '';
+        const cover = bestImage.replace(/\/\d+x\d+bb/, '/600x600bb');
+
+        singles.push({
+          id: `itunes_${trackId}`,
+          title,
+          artist,
+          cover,
+          type: 'single'
+        });
+      }
     }
 
+    console.log(`📡 Discover: ${albums.length} albums, ${singles.length} singles from iTunes`);
     res.json({
       success: true,
-      results,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      genre: genre || 'mixed',
-      refreshing: needsRefresh,
+      albums,
+      singles,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('Discovery error:', error);
-    const fallback = db.prepare('SELECT * FROM albums ORDER BY cached_at DESC LIMIT 20').all();
+    // Fallback to cached albums
+    const fallback = db.prepare(
+      'SELECT * FROM albums WHERE cover_url IS NOT NULL ORDER BY cached_at DESC LIMIT 20'
+    ).all();
     res.json({
       success: true,
-      results: fallback.map(a => ({
-        id: a.id, title: a.title, artist: a.artist, year: a.year,
-        coverUrl: a.cover_url, trackCount: a.track_count, mbid: a.mbid, source: 'cache'
+      albums: fallback.map(a => ({
+        id: a.id, title: a.title, artist: a.artist,
+        cover: a.cover_url, type: 'album', year: a.year,
+        trackCount: a.track_count
       })),
-      page: 0, limit: 20, genre: 'mixed', fallback: true, timestamp: new Date().toISOString()
+      singles: [],
+      fallback: true,
+      timestamp: new Date().toISOString()
     });
+  }
+});
+
+/**
+ * GET /api/album/lookup/:id
+ * iTunes Lookup alias — fetches full tracklist for a collectionId.
+ * Convenience route for the discovery flow (equivalent to /api/album/:id/tracks).
+ */
+app.get('/api/album/lookup/:id', async (req, res) => {
+  // Forward to the existing album tracks endpoint
+  req.params.albumId = req.params.id;
+  const { albumId } = req.params;
+
+  try {
+    // Check local cache first
+    let cachedTracks = db.prepare(
+      'SELECT * FROM tracks WHERE album_id = ? ORDER BY track_number'
+    ).all(albumId);
+
+    if (cachedTracks.length > 0) {
+      return res.json({ success: true, albumId, tracks: cachedTracks, source: 'cache' });
+    }
+
+    const isNumericId = /^\d+$/.test(albumId.replace('itunes_', ''));
+    const lookupId = albumId.startsWith('itunes_') ? albumId.replace('itunes_', '') : albumId;
+
+    if (isNumericId || albumId.startsWith('itunes_')) {
+      try {
+        console.log(`[CATALOG] iTunes Lookup for album: ${lookupId}`);
+        const itunesResp = await axios.get(
+          `https://itunes.apple.com/lookup?id=${lookupId}&entity=song`,
+          { timeout: 6000 }
+        );
+
+        if (itunesResp.data?.results) {
+          const tracks = itunesResp.data.results
+            .filter(item => item.wrapperType === 'track')
+            .map((track, i) => ({
+              id: String(track.trackId || `t-${i}`),
+              album_id: albumId,
+              artist: track.artistName || 'Unknown',
+              title: track.trackName,
+              duration: track.trackTimeMillis
+                ? Math.round(track.trackTimeMillis / 1000)
+                : null,
+              track_number: track.trackNumber || i + 1,
+              duration_formatted: formatMillis(track.trackTimeMillis)
+            }));
+
+          if (tracks.length > 0) {
+            const insertTrack = db.prepare(
+              'INSERT OR IGNORE INTO tracks (id, album_id, artist, title, duration, track_number) VALUES (?, ?, ?, ?, ?, ?)'
+            );
+            for (const t of tracks) {
+              insertTrack.run(t.id, t.album_id, t.artist, t.title, t.duration, t.track_number);
+            }
+            console.log(`[CATALOG] iTunes returned ${tracks.length} tracks`);
+            return res.json({ success: true, albumId, tracks, source: 'itunes' });
+          }
+        }
+      } catch (itunesErr) {
+        console.error(`[CATALOG] iTunes track lookup failed for ${lookupId}:`, itunesErr.message);
+      }
+    }
+
+    res.json({ success: true, albumId, tracks: [], source: 'none' });
+  } catch (error) {
+    console.error('Album lookup error:', error);
+    res.json({ success: true, albumId, tracks: [], source: 'error' });
   }
 });
 
@@ -1630,12 +1739,14 @@ app.get('/api/album/:albumId/tracks', async (req, res) => {
     }
 
     // ── 1. PRIMARY: iTunes Lookup (numeric IDs = collectionId) ──
-    const isNumericId = /^\d+$/.test(albumId);
-    if (isNumericId) {
+    const isItunesId = albumId.startsWith('itunes_') || /^\d+$/.test(albumId);
+    const lookupId = albumId.startsWith('itunes_') ? albumId.replace('itunes_', '') : albumId;
+
+    if (isItunesId) {
       try {
-        console.log(`[CATALOG] iTunes Lookup for album: ${albumId}`);
+        console.log(`[CATALOG] iTunes Lookup for album: ${lookupId}`);
         const itunesResp = await axios.get(
-          `https://itunes.apple.com/lookup?id=${albumId}&entity=song`,
+          `https://itunes.apple.com/lookup?id=${lookupId}&entity=song`,
           { timeout: 6000 }
         );
 
@@ -1751,7 +1862,7 @@ app.get('/api/health', (req, res) => {
 // STATIC FILE SERVING (Frontend)
 // ─────────────────────────────────────────────────────────
 
-const isProduction = process.env.NODE_ENV === 'production';
+const isProduction = process.env.NODE_ENV !== 'development';
 const distDir = path.join(rootDir, 'dist');
 const publicDir = path.join(rootDir, 'public');
 
@@ -1783,24 +1894,38 @@ if (isProduction) {
 initializeDatabase();
 
 async function startServer() {
+  let httpServer;
+
   // Development mode: attach Vite's dev server as middleware
   // This gives you HMR, JSX transform, and instant reload — no build step needed.
   if (!isProduction) {
     try {
+      // Create HTTP server first so Vite can intercept WebSocket upgrades for HMR
+      httpServer = app.listen(PORT, () => {
+        console.log('⚡ Vite dev server attached — HMR + JSX transform active');
+        printBanner();
+      });
+
       const vite = await createViteServer({
-        server: { middlewareMode: true },
+        server: { middlewareMode: true, hmr: { server: httpServer } },
         appType: 'spa',
       });
       app.use(vite.middlewares);
-      console.log('⚡ Vite dev server attached — HMR + JSX transform active');
     } catch (e) {
       console.error('⚠ Failed to start Vite dev server:', e.message);
       console.log('   Falling back to raw public/ directory...');
       app.use(express.static(publicDir));
+
+      if (!httpServer) {
+        httpServer = app.listen(PORT, printBanner);
+      }
     }
+  } else {
+    // Production mode: serve pre-built files
+    httpServer = app.listen(PORT, printBanner);
   }
 
-  const server = app.listen(PORT, () => {
+  function printBanner() {
     const mode = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
@@ -1828,7 +1953,7 @@ async function startServer() {
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
     `);
-  });
+  }
 
   // Graceful shutdown
   process.on('SIGINT', () => {
@@ -1837,7 +1962,7 @@ async function startServer() {
       try { engine.destroy(() => { }); } catch (e) { /* ok */ }
     }
     try { db.close(); } catch (e) { /* ok */ }
-    server.close();
+    httpServer.close();
     process.exit(0);
   });
 }
