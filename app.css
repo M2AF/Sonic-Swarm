@@ -574,6 +574,14 @@ button:disabled {
   border-radius: 16px;
   flex-shrink: 0;
   color: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+
+.album-art-large {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 16px;
 }
 
 .album-info {
@@ -919,152 +927,171 @@ button:disabled {
 }
 
 /* ─────────────────────────────────────────────────────────
-   FLOATING MINI-PLAYER (bottom-left of screen)
+   PLAYER BAR
+   In-flow flex child of .main-content — NEVER overlaps content.
+   The key: NO position:fixed or position:absolute on the bar itself.
+   It sits as the last flex child in the column, so .content
+   (flex:1, overflow-y:auto) always stops exactly above it.
    ───────────────────────────────────────────────────────── */
 
-/* ─────────────────────────────────────────────────────────
-   SIDEBAR MINI-PLAYER (Inside sidebar)
-   ───────────────────────────────────────────────────────── */
-
-.sidebar-mini-player {
-  width: 100%;
+.player-bar {
+  /* CRITICAL: no position:fixed, no position:absolute on this element */
+  flex-shrink: 0;
+  height: 80px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
   position: relative;
-  background: rgba(30, 41, 59, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  padding: 12px;
+  /* Only so .player-progress can use absolute inside it */
+  z-index: 10;
+}
+
+/* Left: artwork + track info */
+.player-left {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  transition: all var(--transition);
-  animation: slideDown 0.3s ease;
-  margin: 16px 0;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: scaleY(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: scaleY(1);
-  }
-}
-
-.sidebar-mini-player:hover {
-  background: rgba(30, 41, 59, 0.8);
-  border-color: var(--accent);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-}
-
-/* Album art in sidebar mini-player */
-.sidebar-mini-player .mini-player-art {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 10px;
+.player-art {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  flex-shrink: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
-  color: rgba(255, 255, 255, 0.3);
-  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.4);
 }
 
-.sidebar-mini-player .mini-player-art img {
+.player-art img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-/* Track info in sidebar mini-player */
-.sidebar-mini-player .mini-player-info {
-  width: 100%;
+.player-track-info {
   min-width: 0;
-  overflow: hidden;
-  text-align: center;
-  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.sidebar-mini-player .mini-player-track {
-  font-size: 12px;
+.player-track-title {
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.3;
 }
 
-.sidebar-mini-player .mini-player-artist {
+.player-artist {
   font-size: 11px;
   color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.3;
 }
 
-/* Controls in sidebar mini-player */
-.sidebar-mini-player .mini-player-controls {
+/* Center: transport controls */
+.player-center {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  width: 100%;
-  flex-shrink: 0;
 }
 
-.sidebar-mini-player .mini-player-controls button {
-  background: rgba(255, 255, 255, 0.08);
+.player-btn {
+  background: transparent;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all var(--transition);
-  flex: 1;
 }
 
-.sidebar-mini-player .mini-player-controls button:hover:not(:disabled) {
-  color: var(--accent);
-  background: rgba(14, 165, 233, 0.2);
-  transform: scale(1.05);
-}
-
-.sidebar-mini-player .mini-player-controls button:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-/* Progress bar in sidebar mini-player */
-.sidebar-mini-player .mini-player-progress {
-  position: relative;
-  width: 100%;
-  height: 4px;
+.player-btn:hover:not(:disabled) {
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-top: 4px;
 }
 
-.sidebar-mini-player .mini-progress-fill {
+.player-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.player-btn.play-pause {
+  width: 44px;
+  height: 44px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+}
+
+.player-btn.play-pause:hover:not(:disabled) {
+  background: var(--accent-dark);
+  transform: scale(1.06);
+  color: #fff;
+}
+
+.player-btn.stop-btn {
+  color: var(--text-tertiary);
+  width: 36px;
+  height: 36px;
+}
+
+.player-btn.stop-btn:hover:not(:disabled) {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+/* Right: swarm stats */
+.player-right {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+}
+
+.player-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* Seek bar — pinned to very bottom edge of the player bar */
+.player-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: height 0.15s ease;
+}
+
+.player-progress:hover {
+  height: 5px;
+}
+
+.player-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
-  border-radius: 2px;
-  transition: width 0.15s linear;
-}
-
-/* Legacy floating-mini-player styles (kept for backwards compatibility) - HIDDEN */
-.floating-mini-player {
-  display: none;
+  transition: width 0.1s linear;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -1072,14 +1099,9 @@ button:disabled {
    ───────────────────────────────────────────────────────── */
 
 @media (max-width: 1200px) {
-  .sidebar-mini-player {
-    padding: 10px;
-    gap: 8px;
-    border-radius: 10px;
-  }
-
-  .sidebar-mini-player .mini-player-controls button {
-    padding: 6px;
+  .player-bar {
+    padding: 0 16px;
+    gap: 12px;
   }
 }
 
@@ -1113,8 +1135,17 @@ button:disabled {
     display: none;
   }
 
-  /* Hide mini-player on mobile (sidebar is now horizontal) */
-  .sidebar-mini-player {
+  /* Stack player bar vertically on mobile */
+  .player-bar {
+    height: auto;
+    min-height: 64px;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    padding: 8px 16px;
+    gap: 8px;
+  }
+
+  .player-right {
     display: none;
   }
 

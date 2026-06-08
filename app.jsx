@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square } from 'lucide-react';
 import { useSonicSwarm } from './SonicSwarmContext';
 import './App.css';
 
@@ -220,6 +220,9 @@ export default function App() {
   const audioRef = useRef(null);
   const magnetInputRef = useRef(null);
 
+  // Ref to suppress the torrent-resolution effect during same-torrent skips
+  const isIntraTorrentSkip = useRef(false);
+
   // Calculate the active stream URL in the render pass so it stays in sync
   const currentStreamUrl = sonicSwarm.getFileStreamUrl(sonicSwarm.currentAudioIndex || 0);
 
@@ -381,6 +384,12 @@ export default function App() {
     const track = currentAlbum.tracks[currentTrackIndex];
     if (!track) return;
 
+    // Skip resolution when jumping within the same multi-track torrent
+    if (isIntraTorrentSkip.current) {
+      isIntraTorrentSkip.current = false;
+      return;
+    }
+
     // Skip resolution for magnet-pasted albums (they already have a stream)
     if (track._fileIndex !== undefined && sonicSwarm.currentStreamId) return;
 
@@ -472,6 +481,33 @@ export default function App() {
   };
 
   /**
+   * handleStop — Kill all audio, purge stream state, clear Now Playing.
+   * Returns the user to the library view with everything reset.
+   */
+  const handleStop = () => {
+    // Kill audio hardware immediately
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute('src');
+      audioRef.current.load();
+    }
+
+    // Wipe all playback state
+    setIsPlaying(false);
+    setPlaybackProgress(0);
+    setCurrentTime(0);
+    setCurrentAlbum(null);
+    setCurrentTrackIndex(0);
+    setCurrentTorrentData(null);
+    setTorrentError(null);
+    setInspectingTrackId(null);
+    setActiveSourcePreferences({ infoHash: null, quality: null, sourceName: null });
+
+    // Purge backend stream context
+    sonicSwarm.resetPlayback();
+  };
+
+  /**
    * executeTrackChange — Shared logic for auto-advance AND manual skips.
    * Strategy 1: Jump within the SAME multi-track torrent (no new connections).
    * Strategy 2: Fetch & rank fresh sources, then start a new stream.
@@ -482,13 +518,10 @@ export default function App() {
     const track = currentAlbum.tracks[index];
     if (!track) return;
 
-    // 1. HARD RESET: Kill the zombie audio stream immediately
+    // Pause current playback — DO NOT remove src or call load(), React handles remount
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.removeAttribute('src');
-      audioRef.current.load();
     }
-    setIsPlaying(false);
     setCurrentTrackIndex(index);
     setPlaybackProgress(0);
     sonicSwarm.setStreamStatus('resolving');
@@ -507,17 +540,14 @@ export default function App() {
         if (fileMatchIndex !== -1) {
           console.log(`[SKIP] Found "${track.title}" in active torrent at file index: ${fileMatchIndex}`);
 
-          sonicSwarm.setCurrentAudioIndex(fileMatchIndex);
+          // Signal the torrent-resolution effect to skip (same torrent, no new fetch needed)
+          isIntraTorrentSkip.current = true;
 
-          // Defer slightly to let React update the <audio key={...}> element
-          setTimeout(() => {
-            sonicSwarm.setStreamStatus('ready');
-            setIsPlaying(true);
-            if (audioRef.current) {
-              audioRef.current.load();
-              audioRef.current.play().catch(e => console.warn('Autoplay blocked:', e));
-            }
-          }, 150);
+          // State-only approach: React remounts <audio key={streamId-audioIndex}>
+          // and the useEffect handles canplay → play() lifecycle
+          sonicSwarm.setCurrentAudioIndex(fileMatchIndex);
+          sonicSwarm.setStreamStatus('streaming');
+          setIsPlaying(true);
           return;
         }
       }
@@ -715,58 +745,7 @@ export default function App() {
           </button>
         </nav>
 
-        {/* Sidebar Mini-Player */}
-        {currentAlbum && (
-          <div className={`sidebar-mini-player ${!isPlayerExpanded ? 'minimized' : ''}`}>
-            {isPlayerExpanded ? (
-              <>
-                <div className="mini-player-header">
-                  <span className="mini-player-label">Now Playing</span>
-                  <button
-                    className="minimize-btn"
-                    onClick={() => setIsPlayerExpanded(false)}
-                    title="Minimize"
-                  >
-                    <ChevronDown size={16} />
-                  </button>
-                </div>
-                <div className="mini-player-art">
-                  {currentAlbum.artworkUrl ? (
-                    <img src={currentAlbum.artworkUrl} alt="" />
-                  ) : (
-                    <Music size={22} />
-                  )}
-                </div>
-                <div className="mini-player-info">
-                  <p className="mini-player-track">{currentAlbum.tracks[currentTrackIndex].title}</p>
-                  <p className="mini-player-artist">{currentAlbum.artist}</p>
-                </div>
-                <div className="mini-player-controls">
-                  <button onClick={() => handleSkip('prev')} disabled={currentTrackIndex === 0} title="Previous">
-                    <SkipBack size={14} />
-                  </button>
-                  <button onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
-                    {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-                  </button>
-                  <button onClick={() => handleSkip('next')} disabled={currentTrackIndex >= (currentAlbum.tracks.length - 1)} title="Next">
-                    <SkipForward size={14} />
-                  </button>
-                </div>
-                <div className="mini-player-progress">
-                  <div className="mini-progress-fill" style={{ width: `${playbackProgress}%` }} />
-                </div>
-              </>
-            ) : (
-              <button
-                className="minimize-btn expand-btn"
-                onClick={() => setIsPlayerExpanded(true)}
-                title="Expand player"
-              >
-                <ChevronUp size={18} />
-              </button>
-            )}
-          </div>
-        )}
+
 
         <div className="sidebar-footer">
           <div className="stats">
@@ -971,6 +950,76 @@ export default function App() {
             </div>
           )}
         </div>
+        {/* PLAYER BAR — in-flow flex child, NEVER overlaps content */}
+        {currentAlbum && (
+          <div className="player-bar">
+            {/* Left: artwork + track info */}
+            <div className="player-left">
+              <div className="player-art">
+                {currentAlbum.artworkUrl ? (
+                  <img src={currentAlbum.artworkUrl} alt="" />
+                ) : (
+                  <Music size={20} />
+                )}
+              </div>
+              <div className="player-track-info">
+                <span className="player-track-title">
+                  {currentAlbum.tracks[currentTrackIndex]?.title}
+                </span>
+                <span className="player-artist">{currentAlbum.artist}</span>
+              </div>
+            </div>
+
+            {/* Center: transport controls */}
+            <div className="player-center">
+              <button
+                className="player-btn"
+                onClick={() => handleSkip('prev')}
+                disabled={currentTrackIndex === 0}
+                title="Previous"
+              >
+                <SkipBack size={18} />
+              </button>
+              <button className="player-btn play-pause" onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+                {isPlaying ? <Pause size={22} /> : <Play size={22} />}
+              </button>
+              <button
+                className="player-btn stop-btn"
+                onClick={handleStop}
+                title="Stop playback"
+              >
+                <Square size={20} />
+              </button>
+              <button
+                className="player-btn"
+                onClick={() => handleSkip('next')}
+                disabled={currentTrackIndex >= currentAlbum.tracks.length - 1}
+                title="Next"
+              >
+                <SkipForward size={18} />
+              </button>
+            </div>
+
+            {/* Right: swarm stats */}
+            <div className="player-right">
+              <span className="player-stat">
+                <Users size={12} /> {sonicSwarm.swarmStats.totalPeers} peers
+              </span>
+              <span className="player-stat">
+                ↓ {sonicSwarm.swarmStats.totalDownloadSpeed} MB/s
+              </span>
+              <span className="player-stat">
+                {sonicSwarm.streamStatus === 'streaming' ? '●' : '○'}&nbsp;
+                {Math.round(playbackProgress)}% buffered
+              </span>
+            </div>
+
+            {/* Seek bar — absolutely positioned at the very bottom of the bar */}
+            <div className="player-progress" onClick={handleSeek} title="Seek">
+              <div className="player-progress-fill" style={{ width: `${playbackProgress}%` }} />
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Hidden Audio Element */}

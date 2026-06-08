@@ -33,6 +33,7 @@ export const SonicSwarmProvider = ({ children }) => {
   const [currentMagnet, setCurrentMagnet] = useState(null);
   const [currentTorrentFiles, setCurrentTorrentFiles] = useState([]);
   const [streamStatus, setStreamStatus] = useState('idle');
+  const [isAlbumPackStream, setIsAlbumPackStream] = useState(false);
 
   // Swarm Statistics
   const [swarmStats, setSwarmStats] = useState({
@@ -282,6 +283,11 @@ export const SonicSwarmProvider = ({ children }) => {
       setCurrentMagnet(magnet);
       setCurrentTorrentFiles(data.files || []);
 
+      // Determine if this torrent is a multi-file album pack
+      const audioExtRe = /\.(mp3|flac|wav|m4a|ogg|aac|opus)$/i;
+      const audioFileCount = (data.files || []).filter(f => audioExtRe.test(f)).length;
+      setIsAlbumPackStream(audioFileCount > 1);
+
       // If targetTrackTitle is numeric, use it as a direct file index
       if (typeof targetTrackTitle === 'number') {
         setCurrentAudioIndex(targetTrackTitle);
@@ -378,6 +384,7 @@ export const SonicSwarmProvider = ({ children }) => {
     setCurrentAudioIndex(0);
     setCurrentTorrentName('');
     setCurrentTorrentFiles([]);
+    setIsAlbumPackStream(false);
     setStreamStatus('idle');
   }, []);
 
@@ -409,6 +416,7 @@ export const SonicSwarmProvider = ({ children }) => {
     currentTorrentName,
     currentMagnet,
     currentTorrentFiles,
+    isAlbumPackStream,
     streamStatus,
     setStreamStatus,
     startStream,
