@@ -192,6 +192,7 @@ export default function App() {
   const [selectedAlbum, setSelectedAlbum] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [magnetPasteMessage, setMagnetPasteMessage] = useState('');
+  const [isPlayerExpanded, setIsPlayerExpanded] = useState(true); // Mini-player expanded/minimized
 
   // Playback State
   const [currentAlbum, setCurrentAlbum] = useState(null);
@@ -714,6 +715,59 @@ export default function App() {
           </button>
         </nav>
 
+        {/* Sidebar Mini-Player */}
+        {currentAlbum && (
+          <div className={`sidebar-mini-player ${!isPlayerExpanded ? 'minimized' : ''}`}>
+            {isPlayerExpanded ? (
+              <>
+                <div className="mini-player-header">
+                  <span className="mini-player-label">Now Playing</span>
+                  <button
+                    className="minimize-btn"
+                    onClick={() => setIsPlayerExpanded(false)}
+                    title="Minimize"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                </div>
+                <div className="mini-player-art">
+                  {currentAlbum.artworkUrl ? (
+                    <img src={currentAlbum.artworkUrl} alt="" />
+                  ) : (
+                    <Music size={22} />
+                  )}
+                </div>
+                <div className="mini-player-info">
+                  <p className="mini-player-track">{currentAlbum.tracks[currentTrackIndex].title}</p>
+                  <p className="mini-player-artist">{currentAlbum.artist}</p>
+                </div>
+                <div className="mini-player-controls">
+                  <button onClick={() => handleSkip('prev')} disabled={currentTrackIndex === 0} title="Previous">
+                    <SkipBack size={14} />
+                  </button>
+                  <button onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+                    {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+                  </button>
+                  <button onClick={() => handleSkip('next')} disabled={currentTrackIndex >= (currentAlbum.tracks.length - 1)} title="Next">
+                    <SkipForward size={14} />
+                  </button>
+                </div>
+                <div className="mini-player-progress">
+                  <div className="mini-progress-fill" style={{ width: `${playbackProgress}%` }} />
+                </div>
+              </>
+            ) : (
+              <button
+                className="minimize-btn expand-btn"
+                onClick={() => setIsPlayerExpanded(true)}
+                title="Expand player"
+              >
+                <ChevronUp size={18} />
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="sidebar-footer">
           <div className="stats">
             <div className="stat">
@@ -918,37 +972,6 @@ export default function App() {
           )}
         </div>
       </main>
-
-      {/* Floating Mini-Player — bottom-left of screen */}
-      {currentAlbum && (
-        <div className="floating-mini-player">
-          <div className="mini-player-art">
-            {currentAlbum.artworkUrl ? (
-              <img src={currentAlbum.artworkUrl} alt="" />
-            ) : (
-              <Music size={22} />
-            )}
-          </div>
-          <div className="mini-player-info">
-            <p className="mini-player-track">{currentAlbum.tracks[currentTrackIndex].title}</p>
-            <p className="mini-player-artist">{currentAlbum.artist}</p>
-          </div>
-          <div className="mini-player-controls">
-            <button onClick={() => handleSkip('prev')} disabled={currentTrackIndex === 0} title="Previous">
-              <SkipBack size={14} />
-            </button>
-            <button onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
-              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            </button>
-            <button onClick={() => handleSkip('next')} disabled={currentTrackIndex >= (currentAlbum.tracks.length - 1)} title="Next">
-              <SkipForward size={14} />
-            </button>
-          </div>
-          <div className="mini-player-progress">
-            <div className="mini-progress-fill" style={{ width: `${playbackProgress}%` }} />
-          </div>
-        </div>
-      )}
 
       {/* Hidden Audio Element */}
       <audio

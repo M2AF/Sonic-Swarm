@@ -76,6 +76,8 @@ body {
   justify-content: space-between;
   overflow-y: auto;
   flex-shrink: 0;
+  min-height: 0;
+  /* Critical: allows flex children to work */
 }
 
 .sidebar-header {
@@ -176,11 +178,12 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
+  /* This is CRITICAL: Column layout so items stack vertically */
   background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
   min-height: 0;
   /* Critical: allows flex children to shrink */
   overflow: hidden;
-  /* Prevents double scrollbars */
+  /* Prevents double scrollbars on container itself */
 }
 
 .header {
@@ -192,7 +195,18 @@ body {
   justify-content: space-between;
   gap: 32px;
   flex-shrink: 0;
+  /* CRITICAL: Header never shrinks, always takes 80px */
   position: relative;
+}
+
+.content {
+  flex: 1;
+  /* CRITICAL: Content takes ALL remaining space */
+  overflow-y: auto;
+  /* ONLY content scrolls, not the whole page */
+  padding: 32px;
+  min-height: 0;
+  /* Allows flex to calculate scroll properly */
 }
 
 .search-bar {
@@ -294,11 +308,6 @@ body {
   gap: 6px;
 }
 
-.content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 32px;
-}
 
 /* ─────────────────────────────────────────────────────────
    BUTTON RESETS & TRANSITIONS
@@ -672,6 +681,12 @@ button:disabled {
 .tracklist-items {
   display: flex;
   flex-direction: column;
+  max-height: 500px;
+  /* Creates a scrollable box - content scrolls WITHIN this, never goes behind player */
+  overflow-y: auto;
+  /* Smooth scrollbar in Firefox/Chrome */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .track-item {
@@ -907,48 +922,50 @@ button:disabled {
    FLOATING MINI-PLAYER (bottom-left of screen)
    ───────────────────────────────────────────────────────── */
 
-.floating-mini-player {
-  position: fixed;
-  bottom: 20px;
-  left: 20px;
-  z-index: 100;
-  background: rgba(15, 23, 42, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 10px 14px;
+/* ─────────────────────────────────────────────────────────
+   SIDEBAR MINI-PLAYER (Inside sidebar)
+   ───────────────────────────────────────────────────────── */
+
+.sidebar-mini-player {
+  width: 100%;
+  position: relative;
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 12px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 10px;
-  min-width: 280px;
-  max-width: 360px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  transition: transform 0.2s ease, opacity 0.2s ease;
-  animation: slideUp 0.3s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: all var(--transition);
+  animation: slideDown 0.3s ease;
+  margin: 16px 0;
 }
 
-@keyframes slideUp {
+@keyframes slideDown {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: scaleY(0.9);
   }
-
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: scaleY(1);
   }
 }
 
-.floating-mini-player:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+.sidebar-mini-player:hover {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
-.floating-mini-player .mini-player-art {
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
+/* Album art in sidebar mini-player */
+.sidebar-mini-player .mini-player-art {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -958,19 +975,22 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.floating-mini-player .mini-player-art img {
+.sidebar-mini-player .mini-player-art img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.floating-mini-player .mini-player-info {
-  flex: 1;
+/* Track info in sidebar mini-player */
+.sidebar-mini-player .mini-player-info {
+  width: 100%;
   min-width: 0;
   overflow: hidden;
+  text-align: center;
+  padding: 0 4px;
 }
 
-.floating-mini-player .mini-player-track {
+.sidebar-mini-player .mini-player-track {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
@@ -980,7 +1000,7 @@ button:disabled {
   line-height: 1.3;
 }
 
-.floating-mini-player .mini-player-artist {
+.sidebar-mini-player .mini-player-artist {
   font-size: 11px;
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -989,52 +1009,62 @@ button:disabled {
   line-height: 1.3;
 }
 
-.floating-mini-player .mini-player-controls {
+/* Controls in sidebar mini-player */
+.sidebar-mini-player .mini-player-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
   flex-shrink: 0;
 }
 
-.floating-mini-player .mini-player-controls button {
-  background: transparent;
+.sidebar-mini-player .mini-player-controls button {
+  background: rgba(255, 255, 255, 0.08);
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 4px;
+  padding: 8px;
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: all var(--transition);
+  flex: 1;
 }
 
-.floating-mini-player .mini-player-controls button:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.08);
+.sidebar-mini-player .mini-player-controls button:hover:not(:disabled) {
+  color: var(--accent);
+  background: rgba(14, 165, 233, 0.2);
+  transform: scale(1.05);
 }
 
-.floating-mini-player .mini-player-controls button:disabled {
+.sidebar-mini-player .mini-player-controls button:disabled {
   opacity: 0.3;
   cursor: default;
 }
 
-.floating-mini-player .mini-player-progress {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
+/* Progress bar in sidebar mini-player */
+.sidebar-mini-player .mini-player-progress {
+  position: relative;
+  width: 100%;
+  height: 4px;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 0 0 14px 14px;
+  border-radius: 2px;
   overflow: hidden;
+  margin-top: 4px;
 }
 
-.floating-mini-player .mini-progress-fill {
+.sidebar-mini-player .mini-progress-fill {
   height: 100%;
-  background: var(--accent);
-  border-radius: 0 0 14px 14px;
+  background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
+  border-radius: 2px;
   transition: width 0.15s linear;
+}
+
+/* Legacy floating-mini-player styles (kept for backwards compatibility) - HIDDEN */
+.floating-mini-player {
+  display: none;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -1042,11 +1072,14 @@ button:disabled {
    ───────────────────────────────────────────────────────── */
 
 @media (max-width: 1200px) {
-  .floating-mini-player {
-    min-width: 240px;
-    max-width: 300px;
-    gap: 6px;
-    padding: 8px 10px;
+  .sidebar-mini-player {
+    padding: 10px;
+    gap: 8px;
+    border-radius: 10px;
+  }
+
+  .sidebar-mini-player .mini-player-controls button {
+    padding: 6px;
   }
 }
 
@@ -1077,6 +1110,11 @@ button:disabled {
   }
 
   .sidebar-footer {
+    display: none;
+  }
+
+  /* Hide mini-player on mobile (sidebar is now horizontal) */
+  .sidebar-mini-player {
     display: none;
   }
 
