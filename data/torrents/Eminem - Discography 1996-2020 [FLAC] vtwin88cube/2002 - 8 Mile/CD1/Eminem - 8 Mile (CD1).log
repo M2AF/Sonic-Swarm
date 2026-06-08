@@ -1,0 +1,243 @@
+Exact Audio Copy V0.99 prebeta 4 from 23. January 2008
+
+EAC extraction logfile from 30. July 2008, 10:54
+
+Various / 8 Mile (Disc 1)
+
+Used drive  : TSSTcorpCDDVDW TS-H653N   Adapter: 2  ID: 1
+
+Read mode               : Secure
+Utilize accurate stream : Yes
+Defeat audio cache      : Yes
+Make use of C2 pointers : No
+
+Read offset correction                      : 6
+Overread into Lead-In and Lead-Out          : No
+Fill up missing offset samples with silence : Yes
+Delete leading and trailing silent blocks   : No
+Null samples used in CRC calculations       : Yes
+Used interface                              : Native Win32 interface for Win NT & 2000
+Gap handling                                : Appended to previous track
+
+Used output format              : User Defined Encoder
+Selected bitrate                : 768 kBit/s
+Quality                         : High
+Add ID3 tag                     : No
+Command line compressor         : C:\Program Files\FLAC\flac.exe
+Additional command line options : -V -8 -T "artist=%a" -T "title=%t" -T "album=%g" -T "date=%y" -T "tracknumber=%n" %s
+
+
+TOC of the extracted CD
+
+     Track |   Start  |  Length  | Start sector | End sector 
+    ---------------------------------------------------------
+        1  |  0:00.00 |  5:20.22 |         0    |    24021   
+        2  |  5:20.22 |  4:30.56 |     24022    |    44327   
+        3  |  9:51.03 |  6:00.45 |     44328    |    71372   
+        4  | 15:51.48 |  3:48.67 |     71373    |    88539   
+        5  | 19:40.40 |  4:15.03 |     88540    |   107667   
+        6  | 23:55.43 |  5:53.57 |    107668    |   134199   
+        7  | 29:49.25 |  4:08.13 |    134200    |   152812   
+        8  | 33:57.38 |  3:39.10 |    152813    |   169247   
+        9  | 37:36.48 |  4:21.35 |    169248    |   188857   
+       10  | 41:58.08 |  3:50.32 |    188858    |   206139   
+       11  | 45:48.40 |  3:38.53 |    206140    |   222542   
+       12  | 49:27.18 |  3:37.70 |    222543    |   238887   
+       13  | 53:05.13 |  4:23.37 |    238888    |   258649   
+       14  | 57:28.50 |  4:45.45 |    258650    |   280069   
+       15  | 62:14.20 |  2:56.35 |    280070    |   293304   
+       16  | 65:10.55 |  3:10.05 |    293305    |   307559   
+       17  | 70:52.60 |  0:30.17 |    318960    |   321226   
+
+
+Track  1
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\01 - Lose Yourself.wav
+
+     Pre-gap length  0:00:02.00
+
+     Peak level 99.9 %
+     Track quality 100.0 %
+     Test CRC 3E037E97
+     Copy CRC 3E037E97
+     Accurately ripped (confidence 2)  [E35B64B2]
+     Copy OK
+
+Track  2
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\02 - Love Me.wav
+
+     Peak level 98.8 %
+     Track quality 100.0 %
+     Test CRC 030B2800
+     Copy CRC 030B2800
+     Accurately ripped (confidence 2)  [6BAE1669]
+     Copy OK
+
+Track  3
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\03 - 8 Mile.wav
+
+     Peak level 98.9 %
+     Track quality 99.9 %
+     Test CRC AAD48095
+     Copy CRC AAD48095
+     Accurately ripped (confidence 2)  [93E830E2]
+     Copy OK
+
+Track  4
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\04 - Adrenaline Rush.wav
+
+     Pre-gap length  0:00:01.18
+
+     Peak level 98.8 %
+     Track quality 100.0 %
+     Test CRC D5E51677
+     Copy CRC D5E51677
+     Accurately ripped (confidence 2)  [BA07635B]
+     Copy OK
+
+Track  5
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\05 - Places To Go.wav
+
+     Peak level 99.9 %
+     Track quality 99.9 %
+     Test CRC EF84F803
+     Copy CRC EF84F803
+     Accurately ripped (confidence 2)  [2ED9D4FD]
+     Copy OK
+
+Track  6
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\06 - Rap Game.wav
+
+     Peak level 99.6 %
+     Track quality 100.0 %
+     Test CRC 7EC73537
+     Copy CRC 7EC73537
+     Accurately ripped (confidence 2)  [10881995]
+     Copy OK
+
+Track  7
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\07 - 8 Miles And Runnin'.wav
+
+     Peak level 98.8 %
+     Track quality 100.0 %
+     Test CRC 1A36E51B
+     Copy CRC 1A36E51B
+     Accurately ripped (confidence 2)  [DBA7FDDF]
+     Copy OK
+
+Track  8
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\08 - Spit Shine.wav
+
+     Peak level 96.3 %
+     Track quality 99.9 %
+     Test CRC AAA0E6F7
+     Copy CRC AAA0E6F7
+     Track not present in AccurateRip database
+     Copy OK
+
+Track  9
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\09 - Time Of My Life.wav
+
+     Peak level 98.8 %
+     Track quality 100.0 %
+     Test CRC E0FA21A7
+     Copy CRC E0FA21A7
+     Accurately ripped (confidence 2)  [6DE48064]
+     Copy OK
+
+Track 10
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\10 - U Wanna Be Me.wav
+
+     Peak level 85.3 %
+     Track quality 100.0 %
+     Test CRC 34DDD270
+     Copy CRC 34DDD270
+     Accurately ripped (confidence 2)  [B47C74BB]
+     Copy OK
+
+Track 11
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\11 - Wanksta.wav
+
+     Peak level 99.9 %
+     Track quality 100.0 %
+     Test CRC 1ACDE081
+     Copy CRC 1ACDE081
+     Track not present in AccurateRip database
+     Copy OK
+
+Track 12
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\12 - Wasting My Time.wav
+
+     Peak level 87.4 %
+     Track quality 100.0 %
+     Test CRC 3E60B185
+     Copy CRC 3E60B185
+     Accurately ripped (confidence 2)  [73D6B379]
+     Copy OK
+
+Track 13
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\13 - R.A.K.I.M..wav
+
+     Peak level 98.8 %
+     Track quality 100.0 %
+     Test CRC 34763ADE
+     Copy CRC 34763ADE
+     Accurately ripped (confidence 2)  [AF6A3B8E]
+     Copy OK
+
+Track 14
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\14 - That's My Nigga Fo' Real.wav
+
+     Peak level 98.8 %
+     Track quality 99.9 %
+     Test CRC 65CE8054
+     Copy CRC 65CE8054
+     Accurately ripped (confidence 2)  [EAAFDC8A]
+     Copy OK
+
+Track 15
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\15 - Battle.wav
+
+     Peak level 99.9 %
+     Track quality 100.0 %
+     Test CRC C88491D3
+     Copy CRC C88491D3
+     Track not present in AccurateRip database
+     Copy OK
+
+Track 16
+
+     Filename C:\Hi there RIAA, What's up IFPI\Various Artists - 8 Mile\Disc 1\16 - Rabbit Run.wav
+
+     Pre-gap length  0:00:01.46
+
+     Peak level 99.9 %
+     Track quality 100.0 %
+     Test CRC 723A7258
+     Copy CRC 723A7258
+     Accurately ripped (confidence 2)  [F10F4D2E]
+     Copy OK
+
+
+13 track(s) accurately ripped
+ 3 track(s) not present in the AccurateRip database
+
+Some tracks could not be verified as accurate
+
+No errors occurred
+
+End of status report

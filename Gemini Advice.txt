@@ -1,0 +1,99 @@
+It sounds like you are very close to a production-ready state. You've solved the hardest part (the P2P auto-advance logic), and now we just need to patch the UI state and the control handlers.
+
+Here are the fixes for your manual controls and the missing artwork.
+
+### 1. Fix the "Next/Prev" Buttons
+
+Currently, your buttons are likely missing the connection to the `handleEnded` logic. We need to create a `handleSkip` function that mirrors your successful auto-advance logic.
+
+Add this to your `App.jsx` (inside the main `App` component):
+
+```javascript
+const handleSkip = (direction) => {
+  // Calculate new index
+  let nextIndex = direction === 'next' 
+    ? currentTrackIndex + 1 
+    : currentTrackIndex - 1;
+
+  // Boundary checks
+  if (nextIndex < 0) nextIndex = 0;
+  if (nextIndex >= currentAlbum.tracks.length) return; // End of album
+
+  // Trigger the same logic used by auto-advance
+  // We reuse the state update logic
+  setCurrentTrackIndex(nextIndex);
+  
+  // Directly trigger the playback for the new index
+  // (Assuming you have a function like 'triggerTrackChange' or similar)
+  executeTrackChange(nextIndex);
+};
+
+// Helper function to consolidate logic
+const executeTrackChange = async (index) => {
+    setStreamStatus('resolving');
+    const track = currentAlbum.tracks[index];
+    
+    // Check if we already have a source that covers this track (the multi-track album pack logic)
+    // You can call your internal "jump" logic here or fetch new sources
+    // ... insert your Strategy 1/2 logic here ...
+};
+
+```
+
+Then, update your player bar JSX to use this function:
+
+```jsx
+<button onClick={() => handleSkip('prev')}><SkipBack /></button>
+<button onClick={() => isPlaying ? pausePlayback() : playPlayback()} >
+    {isPlaying ? <Pause /> : <Play />}
+</button>
+<button onClick={() => handleSkip('next')}><SkipForward /></button>
+
+```
+
+---
+
+### 2. Fix the Missing Album Art
+
+The reason the artwork disappears is likely because when you click an album, you are passing an object that *only* contains the track list or metadata, losing the `artworkUrl` that was present in the search result.
+
+**Step 1: Capture the art in `handlePlayAlbum**`
+Look for where you define `handlePlayAlbum` in `App.jsx`. Ensure you are passing the image URL into the state:
+
+```javascript
+const handlePlayAlbum = (album) => {
+  setCurrentAlbum({
+    ...album,
+    // Ensure the artwork URL from the iTunes search result is preserved
+    artworkUrl: album.artworkUrl600 || album.artworkUrl100 || album.artworkUrl
+  });
+  setView('album');
+};
+
+```
+
+**Step 2: Render it in the detail view**
+Find the `div` in your `App.jsx` that renders the album detail view (usually where you map `currentAlbum.tracks`). Add the image tag:
+
+```jsx
+{/* Inside your Album Detail View */}
+<div className="album-hero">
+  <img 
+    src={currentAlbum.artworkUrl} 
+    alt={currentAlbum.title} 
+    className="album-art-large"
+  />
+  <div className="album-meta">
+    <h2>{currentAlbum.title}</h2>
+    <p>{currentAlbum.artist}</p>
+  </div>
+</div>
+
+```
+
+### Why this works:
+
+1. **State Persistence:** By explicitly mapping `artworkUrl` in `handlePlayAlbum`, you ensure that the image path doesn't get lost when the app switches from `search` view to `album` view.
+2. **Shared Logic:** By extracting your skip/auto-advance logic into a shared `executeTrackChange` function, you guarantee that manual skips are just as "smart" as auto-advances—they will respect your FLAC/MP3 preferences and attempt to stay within the same torrent file index whenever possible.
+
+**One final tip:** Since you are doing a lot of state manipulation, if the buttons still don't feel "responsive," make sure your `audioRef` update in `handleEnded` (the one I gave you previously with `.load()`) is also inside your `executeTrackChange` function so the browser knows the source has changed.
