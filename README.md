@@ -409,7 +409,7 @@ SonicSwarm is a community project. Whether you're fixing a bug, adding a feature
 
 ```bash
 # Fork and clone
-git clone https://github.com/your-username/sonicswarm.git
+git clone https://github.com/M2AF/sonic-swarm.git
 
 # Create a branch
 git checkout -b feature/my-awesome-feature
