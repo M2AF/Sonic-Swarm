@@ -66,8 +66,8 @@ SonicSwarm has a dark-themed, three-panel interface inspired by the best desktop
 │              │                                │              │
 │   Sidebar    │        Main Content            │   Stats      │
 │              │                                │              │
-│  • Library   │   [Album Art]                  │  14 peers   │
-│  • Search    │   Album Title                  │  ↓ 2.4 MB/s │
+│  • Library   │   [Album Art]                  │  14 peers    │
+│  • Search    │   Album Title                  │  ↓ 2.4 MB/s  │
 │              │   Artist • Year                │  67% buffrd  │
 │  Swarm:      │                                │              │
 │  3 active    │   #  Title       Status  Dur   │              │
@@ -76,8 +76,8 @@ SonicSwarm has a dark-themed, three-panel interface inspired by the best desktop
 │              │   3  Track Three Queue   2:58  │              │
 │              │                                │              │
 ├──────────────┴────────────────────────────────┴──────────────┤
-│  🎵 Track Name — Artist                    ↓ 2.4 MB/s  47p  │
-│  ◀◀   ▶   ⏸   ▶▶     ───⬤─────────────     1:23 / 3:42     │
+│ 🎵 Track Name — Artist                     ↓ 2.4 MB/s  47p   │
+│  ◀◀   ▶   ⏸   ▶▶     ───⬤─────────────     1:23 / 3:42   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
