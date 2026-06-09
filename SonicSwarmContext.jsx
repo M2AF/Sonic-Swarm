@@ -31,6 +31,11 @@ export const SonicSwarmProvider = ({ children }) => {
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [discoveryError, setDiscoveryError] = useState(null);
 
+  // User Library
+  const [libraryAlbums, setLibraryAlbums] = useState([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState(null);
+
   // Playback
   const [currentStreamId, setCurrentStreamId] = useState(null);
   const [currentAudioIndex, setCurrentAudioIndex] = useState(0);
@@ -86,8 +91,8 @@ export const SonicSwarmProvider = ({ children }) => {
   }, []);
 
   /**
-   * Initialize server connection and polling
-   */
+ * Initialize server connection and polling
+ */
   useEffect(() => {
     // Check health immediately
     checkServerHealth();
@@ -103,6 +108,9 @@ export const SonicSwarmProvider = ({ children }) => {
       }
     };
   }, [checkServerHealth]);
+
+  // NOTE: Auto-fetch useEffects for library + discovery are placed AFTER their
+  // useCallback declarations to avoid TDZ (temporal dead zone) crashes.
 
   /**
    * Poll swarm statistics
@@ -147,6 +155,65 @@ export const SonicSwarmProvider = ({ children }) => {
   // ─────────────────────────────────────────────────────────
 
   /**
+   * Fetch discovery homepage data (popular albums + singles from iTunes charts)
+   */
+  const fetchDiscovery = useCallback(async () => {
+    setDiscoveryLoading(true);
+    setDiscoveryError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/discover`);
+      if (!response.ok) throw new Error('Discovery fetch failed');
+
+      const data = await response.json();
+      setDiscoveryData({
+        albums: data.albums || [],
+        singles: data.singles || []
+      });
+      return data;
+    } catch (error) {
+      console.error('Discovery fetch error:', error);
+      setDiscoveryError(error.message);
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  }, []);
+
+  /**
+   * Fetch user's library albums
+   */
+  const fetchLibrary = useCallback(async () => {
+    setLibraryLoading(true);
+    setLibraryError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/library`);
+      if (!response.ok) throw new Error('Library fetch failed');
+
+      const data = await response.json();
+      setLibraryAlbums(data.albums || []);
+      return data;
+    } catch (error) {
+      console.error('Library fetch error:', error);
+      setLibraryError(error.message);
+      setLibraryAlbums([]);
+      throw error;
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, []);
+
+  /**
+   * Auto-fetch library when server first connects
+   * Declared here (after fetchLibrary) to avoid TDZ crash
+   */
+  useEffect(() => {
+    if (serverConnected && libraryAlbums.length === 0 && !libraryLoading) {
+      fetchLibrary();
+    }
+  }, [serverConnected, libraryAlbums.length, libraryLoading, fetchLibrary]);
+
+  /**
  * Search for albums by query
  */
   const searchAlbums = useCallback(async (query) => {
@@ -174,32 +241,65 @@ export const SonicSwarmProvider = ({ children }) => {
   }, []);
 
   /**
-   * Fetch discovery data from iTunes-powered backend
-   * Returns { albums: [...], singles: [...] } for the Discover homepage
+   * Add an album to the user's library
+   * Accepts any album-shaped object — normalizes to what the backend expects
    */
-  const fetchDiscovery = useCallback(async () => {
-    setDiscoveryLoading(true);
-    setDiscoveryError(null);
+  const addToLibrary = useCallback(async (album) => {
+    if (!album) return;
 
     try {
-      const response = await fetch(`${API_BASE}/api/discover`);
-      if (!response.ok) throw new Error('Discovery fetch failed');
-
-      const data = await response.json();
-      setDiscoveryData({
-        albums: data.albums || [],
-        singles: data.singles || []
+      const response = await fetch(`${API_BASE}/api/library`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: album.id,
+          title: album.title,
+          artist: album.artist,
+          year: album.year || null,
+          cover: album.cover || album.coverUrl || album.artworkUrl || null,
+          trackCount: album.trackCount || album.track_count || album.tracks?.length || 0
+        })
       });
-      return data;
+
+      if (!response.ok) throw new Error('Failed to add to library');
+
+      // Refresh library to reflect the addition
+      await fetchLibrary();
+      return true;
     } catch (error) {
-      console.error('Discovery fetch error:', error);
-      setDiscoveryError(error.message);
-      setDiscoveryData({ albums: [], singles: [] });
-      throw error;
-    } finally {
-      setDiscoveryLoading(false);
+      console.error('Add to library error:', error);
+      return false;
     }
-  }, []);
+  }, [fetchLibrary]);
+
+  /**
+   * Remove an album from the user's library
+   */
+  const removeFromLibrary = useCallback(async (albumId) => {
+    if (!albumId) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/api/library/${encodeURIComponent(albumId)}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) throw new Error('Failed to remove from library');
+
+      // Refresh library
+      await fetchLibrary();
+      return true;
+    } catch (error) {
+      console.error('Remove from library error:', error);
+      return false;
+    }
+  }, [fetchLibrary]);
+
+  /**
+   * Check if an album ID is already in the library
+   */
+  const isInLibrary = useCallback((albumId) => {
+    return libraryAlbums.some(a => a.id === albumId);
+  }, [libraryAlbums]);
 
   // ─────────────────────────────────────────────────────────
   // STREMIO-STYLE SOURCES SCRAPER
@@ -442,6 +542,15 @@ export const SonicSwarmProvider = ({ children }) => {
     discoveryLoading,
     discoveryError,
     fetchDiscovery,
+
+    // Library
+    libraryAlbums,
+    libraryLoading,
+    libraryError,
+    fetchLibrary,
+    addToLibrary,
+    removeFromLibrary,
+    isInLibrary,
 
     // Sources (Stremio-style)
     fetchSources,

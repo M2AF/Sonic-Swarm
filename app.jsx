@@ -4,17 +4,17 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square, Compass } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square, Compass, PlusCircle, CheckCircle } from 'lucide-react';
 import { useSonicSwarm } from './SonicSwarmContext';
 import './App.css';
 
 // ─────────────────────────────────────────────────────────
-// DEMO LIBRARY (Replace with real user library)
+// DEMO LIBRARY (fallback when user library is empty)
 // ─────────────────────────────────────────────────────────
 
 const DEMO_LIBRARY = [
   {
-    id: 'album1',
+    id: 'album-1',
     title: 'Midnight Dreams',
     artist: 'Synthetic Minds',
     year: 2023,
@@ -26,7 +26,7 @@ const DEMO_LIBRARY = [
     ]
   },
   {
-    id: 'album2',
+    id: 'album-2',
     title: 'Neural Networks',
     artist: 'Cyber Collective',
     year: 2023,
@@ -42,7 +42,7 @@ const DEMO_LIBRARY = [
 // DISCOVER CATALOG VIEW (Global MusicBrainz search wall)
 // ─────────────────────────────────────────────────────────
 
-function DiscoverCatalogView({ onSelectAlbum, searchQuery, setSearchQuery, searchResults, searchLoading, searchError, handleSearch }) {
+function DiscoverCatalogView({ onSelectAlbum, onAddToLibrary, searchQuery, setSearchQuery, searchResults, searchLoading, searchError, handleSearch }) {
 
   // Clean "Start Screen" if the user hasn't searched yet
   if (!searchQuery && searchResults.length === 0) {
@@ -94,6 +94,17 @@ function DiscoverCatalogView({ onSelectAlbum, searchQuery, setSearchQuery, searc
             <h3>{result.title}</h3>
             <p>{result.artist}</p>
             {result.year && <span className="year">{result.year}</span>}
+            <button
+              className="library-add-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddToLibrary(result);
+              }}
+              title="Add to Library"
+            >
+              <PlusCircle size={14} />
+              Add
+            </button>
           </div>
         ))}
       </div>
@@ -688,7 +699,7 @@ export default function App() {
 
     // Force standardization: find the image whatever the API called it,
     // and assign it to BOTH keys so the UI can't miss it.
-    const resolvedArt = album.artworkUrl600 || album.artworkUrl100 || album.artworkUrl || album.coverUrl;
+    const resolvedArt = album.artworkUrl600 || album.artworkUrl100 || album.artworkUrl || album.coverUrl || album.cover || album.cover_url;
 
     setCurrentAlbum({
       ...album,
@@ -867,6 +878,17 @@ export default function App() {
                               <span className="discover-album-year">{album.year}</span>
                             )}
                           </div>
+                          <button
+                            className="library-add-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sonicSwarm.addToLibrary(album);
+                            }}
+                            title="Add to Library"
+                          >
+                            <PlusCircle size={16} />
+                            Add
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -930,18 +952,22 @@ export default function App() {
             <div className="library-view">
               <h2>Your Library</h2>
               <div className="album-grid">
-                {DEMO_LIBRARY.map(album => (
+                {(Array.isArray(sonicSwarm.libraryAlbums) && sonicSwarm.libraryAlbums.length > 0 ? sonicSwarm.libraryAlbums : DEMO_LIBRARY).map(album => (
                   <div
                     key={album.id}
                     className="album-card"
                     onClick={() => handlePlayAlbum(album)}
                   >
                     <div className="album-art">
-                      <Disc size={64} />
+                      {album.cover_url || album.coverUrl || album.cover ? (
+                        <img src={album.cover_url || album.coverUrl || album.cover} alt={album.title} />
+                      ) : (
+                        <Disc size={64} />
+                      )}
                     </div>
                     <h3>{album.title}</h3>
                     <p>{album.artist}</p>
-                    <span className="year">{album.year}</span>
+                    {album.year && <span className="year">{album.year}</span>}
                   </div>
                 ))}
               </div>
@@ -952,6 +978,7 @@ export default function App() {
           {view === 'search' && (
             <DiscoverCatalogView
               onSelectAlbum={(album) => handlePlayAlbum(album)}
+              onAddToLibrary={(album) => sonicSwarm.addToLibrary(album)}
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
               searchResults={sonicSwarm.searchResults}
@@ -1021,6 +1048,15 @@ export default function App() {
                     <h1>{currentAlbum.title}</h1>
                     <p className="artist">{currentAlbum.artist}</p>
                     <p className="year">{currentAlbum.year}</p>
+
+                    <button
+                      className="library-add-btn album-add-btn"
+                      onClick={() => sonicSwarm.addToLibrary(currentAlbum)}
+                      title="Add to Library"
+                    >
+                      <PlusCircle size={16} />
+                      Add to Library
+                    </button>
 
                     <div className="status-badges">
                       {torrentLoading ? (

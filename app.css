@@ -534,6 +534,66 @@ button:disabled {
 }
 
 /* ─────────────────────────────────────────────────────────
+   LIBRARY ADD BUTTON (appears on album cards)
+   ───────────────────────────────────────────────────────── */
+
+.library-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  width: 100%;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.library-add-btn:hover {
+  border-color: var(--accent);
+  background: rgba(14, 165, 233, 0.1);
+  color: var(--accent);
+}
+
+.library-add-btn.in-library {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--success);
+}
+
+.library-add-btn.in-library:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--danger);
+}
+
+.library-add-btn.in-library:hover::after {
+  content: ' Remove?';
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.album-add-btn {
+  width: fit-content;
+  margin-top: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+/* Empty library hint */
+.empty-hint {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* ─────────────────────────────────────────────────────────
    LIBRARY VIEW
    ───────────────────────────────────────────────────────── */
 

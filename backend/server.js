@@ -465,34 +465,45 @@ async function resolveMusicTorrent(artist, track, album = '') {
       return emptyCached;
     }
 
-    // 3. Query trackers in parallel — 12s budget to allow retries to complete
-    //    Per-tracker timeouts reduced to 4s so retries fit inside the global budget
-    console.log(`⏱️  Starting parallel tracker queries (12s budget, with retries)...`);
+    // 3. Query all trackers in parallel — collect from every source, deduplicate
+    console.log(`⏱️  Starting parallel tracker queries (10s budget, all sources)...`);
 
     const queryPromises = [
-      queryTrackerAPI(artist, track, 'piratebay', album, 4000),
-      queryTrackerAPI(artist, track, 'solidtorrents', album, 4000),
-      queryTrackerAPI(artist, track, 'jackett', album, 4000),
+      queryTrackerAPI(artist, track, 'piratebay',     album, 5000),
+      queryTrackerAPI(artist, track, 'solidtorrents', album, 5000),
+      queryTrackerAPI(artist, track, '1337x',         album, 8000),
+      queryTrackerAPI(artist, track, 'torrentgalaxy', album, 5000),
+      queryTrackerAPI(artist, track, 'bitsearch',     album, 5000),
+      queryTrackerAPI(artist, track, 'nyaa',          album, 5000),
+      queryTrackerAPI(artist, track, 'kickass',       album, 5000),
+      queryTrackerAPI(artist, track, 'jackett',       album, 5000),
     ];
 
-    let allTorrents;
-    try {
-      allTorrents = await Promise.race([
-        // First non-empty result wins (not first-to-complete)
-        Promise.any(
-          queryPromises.map(p =>
-            p.then(r => (r?.length > 0 ? r : Promise.reject(new Error('empty'))))
-          )
-        ),
-        // Global timeout — gives retries room to breathe
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('All trackers timed out after 12s')), 12000)
-        )
-      ]);
-    } catch (e) {
-      console.log(`⏰ Resolver timeout: ${e.message} (${Date.now() - startTime}ms)`);
-      allTorrents = [];
-    }
+    // Race: allSettled vs 10s global timeout — collect every provider that finishes in time
+    const GLOBAL_TIMEOUT = 10000;
+    const settled = await Promise.race([
+      Promise.allSettled(queryPromises),
+      new Promise(resolve =>
+        setTimeout(() => resolve(queryPromises.map(() => ({ status: 'timeout', value: [] }))), GLOBAL_TIMEOUT)
+      )
+    ]);
+
+    // Flatten + deduplicate by info-hash extracted from magnet URI
+    const seen = new Set();
+    const allTorrents = settled
+      .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
+      .flatMap(r => r.value)
+      .filter(t => {
+        if (!t?.magnet) return false;
+        const hashMatch = t.magnet.match(/urn:btih:([a-f0-9]{32,40})/i);
+        const hash = hashMatch ? hashMatch[1].toLowerCase() : t.magnet;
+        if (seen.has(hash)) return false;
+        seen.add(hash);
+        return true;
+      });
+
+    const providerHits = settled.filter(r => r.status === 'fulfilled' && r.value?.length > 0).length;
+    console.log(`📡 Aggregated ${allTorrents.length} unique torrents across ${providerHits} providers (${Date.now() - startTime}ms)`);
 
     // 4. Cache the result — even if empty (prevents re-spamming trackers for 1hr)
     setCache(cacheKey, allTorrents);
@@ -699,6 +710,307 @@ async function queryTrackerAPI(artist, track, source, album = '', timeout = 5000
           // Silently fail for optional Jackett integration
         }
 
+        return [];
+      }
+
+      case '1337x': {
+        // Two-step: search results → visit each torrent page for magnet link
+        // Music category only. Tries multiple mirrors for reliability.
+        const mirrors = [
+          'https://1337x.to',
+          'https://1337x.st',
+          'https://1337x.is',
+          'https://1337x.gd'
+        ];
+        const trackQuery  = encodeURIComponent(`${artist} ${track}`);
+        const albumQuery  = album ? encodeURIComponent(`${artist} ${album}`) : null;
+
+        for (const mirror of mirrors) {
+          for (const q of [trackQuery, albumQuery].filter(Boolean)) {
+            try {
+              const resp = await fetchWithRetry(
+                `${mirror}/category-search/${q}/Music/1/`,
+                { timeout: Math.min(timeout - 2000, 4000) },
+                1
+              );
+              const html = resp.data;
+
+              // Extract torrent detail page links e.g. /torrent/5483953/name/
+              const linkRe = /href="(\/torrent\/\d+\/[^"]+)"/g;
+              const detailLinks = [...new Set([...html.matchAll(linkRe)].map(m => m[1]))].slice(0, 4);
+              if (detailLinks.length === 0) continue;
+
+              // Extract name, seeds, leeches from search table
+              const nameRe  = /class="name"[^>]*>[\s\S]*?<a[^>]+href="\/torrent\/\d+\/[^"]*"[^>]*>([^<]+)<\/a>/g;
+              const seedRe  = /<td class="seeds">(\d+)<\/td>/g;
+              const leechRe = /<td class="leeches">(\d+)<\/td>/g;
+              const names   = [...html.matchAll(nameRe)].map(m => m[1].trim());
+              const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
+              const leeches = [...html.matchAll(leechRe)].map(m => parseInt(m[1]) || 0);
+
+              // Fetch magnet from each detail page (capped at 3 to stay within timeout)
+              const detailResults = await Promise.allSettled(
+                detailLinks.slice(0, 3).map(async (link, i) => {
+                  const detailResp = await axios.get(`${mirror}${link}`, {
+                    timeout: 3000,
+                    headers: { 'User-Agent': getRandomUserAgent() }
+                  });
+                  const magnetMatch = detailResp.data.match(/href="(magnet:\?xt=urn:btih:[^"&]+[^"]*?)"/i);
+                  const hashMatch   = detailResp.data.match(/urn:btih:([a-fA-F0-9]{40}|[A-Z2-7]{32})/i);
+                  const name = names[i] || link.split('/').filter(Boolean).pop()?.replace(/-/g, ' ') || '';
+                  if (magnetMatch) {
+                    return {
+                      magnet:   magnetMatch[1].replace(/&amp;/g, '&'),
+                      fileName: name,
+                      seeders:  seeds[i] ?? 0,
+                      leechers: leeches[i] ?? 0,
+                      quality:  detectQuality(name),
+                      source:   '1337x'
+                    };
+                  } else if (hashMatch) {
+                    return {
+                      magnet:   buildMagnet(hashMatch[1], name),
+                      fileName: name,
+                      seeders:  seeds[i] ?? 0,
+                      leechers: leeches[i] ?? 0,
+                      quality:  detectQuality(name),
+                      source:   '1337x'
+                    };
+                  }
+                  return null;
+                })
+              );
+
+              const results = detailResults
+                .filter(r => r.status === 'fulfilled' && r.value)
+                .map(r => r.value);
+
+              if (results.length > 0) {
+                console.log(`  ✓ 1337x (${mirror}): ${results.length} results (${Date.now() - queryStart}ms)`);
+                return results;
+              }
+            } catch (e) {
+              console.log(`  ✗ 1337x (${mirror}): ${e.message?.substring(0, 60)}`);
+            }
+          }
+        }
+        return [];
+      }
+
+      case 'torrentgalaxy': {
+        // TorrentGalaxy — music cat=15. Info-hash embedded in torrent page links.
+        const mirrors = [
+          'https://tgx.rs',
+          'https://torrentgalaxy.to',
+          'https://torrentgalaxy.mx'
+        ];
+        const queries = [
+          encodeURIComponent(`${artist} ${track}`),
+          album ? encodeURIComponent(`${artist} ${album}`) : null
+        ].filter(Boolean);
+
+        for (const mirror of mirrors) {
+          for (const q of queries) {
+            try {
+              const resp = await fetchWithRetry(
+                `${mirror}/torrents.php?search=${q}&cat=15`,
+                { timeout },
+                1
+              );
+              const html = resp.data;
+
+              // TGx: href="/torrent/INFOHASH/torrent-name"
+              const hashRe  = /href="\/torrent\/([a-fA-F0-9]{40})\/([^"]+)"/g;
+              const seedRe  = /class="[^"]*tgxtableseeds[^"]*"[^>]*><[^>]*>(\d+)/g;
+              const leechRe = /class="[^"]*tgxtableleeches[^"]*"[^>]*><[^>]*>(\d+)/g;
+
+              const hashes  = [...html.matchAll(hashRe)];
+              const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
+              const leeches = [...html.matchAll(leechRe)].map(m => parseInt(m[1]) || 0);
+
+              if (hashes.length === 0) continue;
+
+              const results = hashes.slice(0, 6).map((m, i) => {
+                const hash = m[1];
+                const name = decodeURIComponent(m[2].replace(/-/g, ' '));
+                return {
+                  magnet:   buildMagnet(hash, name),
+                  fileName: name,
+                  seeders:  seeds[i] ?? 0,
+                  leechers: leeches[i] ?? 0,
+                  quality:  detectQuality(name),
+                  source:   'TorrentGalaxy'
+                };
+              });
+
+              if (results.length > 0) {
+                console.log(`  ✓ TorrentGalaxy: ${results.length} results (${Date.now() - queryStart}ms)`);
+                return results;
+              }
+            } catch (e) {
+              console.log(`  ✗ TorrentGalaxy (${mirror}): ${e.message?.substring(0, 60)}`);
+            }
+          }
+        }
+        return [];
+      }
+
+      case 'bitsearch': {
+        // Bitsearch.to — cat=3 is Audio/Music
+        const queries = [
+          encodeURIComponent(`${artist} ${track}`),
+          album ? encodeURIComponent(`${artist} ${album}`) : null
+        ].filter(Boolean);
+
+        for (const q of queries) {
+          try {
+            const resp = await fetchWithRetry(
+              `https://bitsearch.to/search?q=${q}&cat=3&p=1`,
+              { timeout },
+              1
+            );
+            const html = resp.data;
+
+            // Bitsearch embeds magnet links and hash data attributes
+            const magnetRe = /href="(magnet:\?xt=urn:btih:[^"]+)"/gi;
+            const hashRe   = /data-hash="([a-fA-F0-9]{40})"/g;
+            const titleRe  = /class="[^"]*title[^"]*"[^>]*>\s*<[^>]+>([^<]{4,80})</g;
+            const seedRe   = /class="[^"]*seeders?[^"]*"[^>]*>(\d+)/gi;
+
+            const magnets = [...html.matchAll(magnetRe)].map(m => m[1].replace(/&amp;/g, '&'));
+            const hashes  = [...html.matchAll(hashRe)].map(m => m[1]);
+            const titles  = [...html.matchAll(titleRe)].map(m => m[1].trim());
+            const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
+
+            const count = Math.max(magnets.length, hashes.length);
+            if (count === 0) continue;
+
+            const results = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
+              magnet:   magnets[i] || buildMagnet(hashes[i], titles[i] || `${artist} ${track}`),
+              fileName: titles[i] || `${artist} ${track}`,
+              seeders:  seeds[i] ?? 0,
+              leechers: 0,
+              quality:  detectQuality(titles[i] || ''),
+              source:   'Bitsearch'
+            })).filter(r => r.magnet);
+
+            if (results.length > 0) {
+              console.log(`  ✓ Bitsearch: ${results.length} results (${Date.now() - queryStart}ms)`);
+              return results;
+            }
+          } catch (e) {
+            console.log(`  ✗ Bitsearch: ${e.message?.substring(0, 60)}`);
+          }
+        }
+        return [];
+      }
+
+      case 'nyaa': {
+        // Nyaa.si RSS — category 2_0 = Audio. Returns XML with magnet links inline.
+        // Great for J-Pop, K-Pop, anime OSTs but indexes general music too.
+        const queries = [
+          encodeURIComponent(`${artist} ${track}`),
+          album ? encodeURIComponent(`${artist} ${album}`) : null
+        ].filter(Boolean);
+
+        for (const q of queries) {
+          try {
+            const resp = await fetchWithRetry(
+              `https://nyaa.si/?page=rss&q=${q}&c=2_0&f=0`,
+              { timeout },
+              1
+            );
+            const xml = resp.data;
+
+            const itemRe   = /<item>([\s\S]*?)<\/item>/g;
+            const items    = [...xml.matchAll(itemRe)].map(m => m[1]);
+            if (items.length === 0) continue;
+
+            const results = items.slice(0, 6).map(item => {
+              const titleMatch  = item.match(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/) ||
+                                  item.match(/<title>([^<]+)<\/title>/);
+              const magnetMatch = item.match(/<nyaa:magnetUri><!\[CDATA\[(magnet[^\]]+)\]\]>/) ||
+                                  item.match(/href="(magnet:[^"]+)"/);
+              const seedMatch   = item.match(/<nyaa:seeders>(\d+)<\/nyaa:seeders>/);
+              const leechMatch  = item.match(/<nyaa:leechers>(\d+)<\/nyaa:leechers>/);
+
+              if (!magnetMatch) return null;
+              const name = titleMatch?.[1]?.trim() || `${artist} ${track}`;
+              return {
+                magnet:   magnetMatch[1],
+                fileName: name,
+                seeders:  parseInt(seedMatch?.[1]) || 0,
+                leechers: parseInt(leechMatch?.[1]) || 0,
+                quality:  detectQuality(name),
+                source:   'Nyaa'
+              };
+            }).filter(Boolean);
+
+            if (results.length > 0) {
+              console.log(`  ✓ Nyaa: ${results.length} results (${Date.now() - queryStart}ms)`);
+              return results;
+            }
+          } catch (e) {
+            console.log(`  ✗ Nyaa: ${e.message?.substring(0, 60)}`);
+          }
+        }
+        return [];
+      }
+
+      case 'kickass': {
+        // KickassTorrents mirrors — music category
+        const mirrors = [
+          'https://katcr.to',
+          'https://kickasstorrents.to',
+          'https://kat.am'
+        ];
+        const queries = [
+          encodeURIComponent(`${artist} ${track}`),
+          album ? encodeURIComponent(`${artist} ${album}`) : null
+        ].filter(Boolean);
+
+        for (const mirror of mirrors) {
+          for (const q of queries) {
+            try {
+              const resp = await fetchWithRetry(
+                `${mirror}/usearch/${q}/?category=music`,
+                { timeout },
+                1
+              );
+              const html = resp.data;
+
+              // KAT: magnet links in search results or data-torrent attributes
+              const magnetRe = /href="(magnet:\?xt=urn:btih:[^"]+)"/gi;
+              const hashRe   = /data-hash="([a-fA-F0-9]{40})"/g;
+              const titleRe  = /class="[^"]*cellMainLink[^"]*"[^>]*>([^<]{4,100})</g;
+              const seedRe   = /class="[^"]*green[^"]*"[^>]*>(\d+)/g;
+
+              const magnets = [...html.matchAll(magnetRe)].map(m => m[1].replace(/&amp;/g, '&'));
+              const hashes  = [...html.matchAll(hashRe)].map(m => m[1]);
+              const titles  = [...html.matchAll(titleRe)].map(m => m[1].trim());
+              const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
+
+              const count = Math.max(magnets.length, hashes.length);
+              if (count === 0) continue;
+
+              const results = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
+                magnet:   magnets[i] || buildMagnet(hashes[i], titles[i] || `${artist} ${track}`),
+                fileName: titles[i] || `${artist} ${track}`,
+                seeders:  seeds[i] ?? 0,
+                leechers: 0,
+                quality:  detectQuality(titles[i] || ''),
+                source:   'KickassTorrents'
+              })).filter(r => r.magnet);
+
+              if (results.length > 0) {
+                console.log(`  ✓ KickassTorrents (${mirror}): ${results.length} results (${Date.now() - queryStart}ms)`);
+                return results;
+              }
+            } catch (e) {
+              console.log(`  ✗ KickassTorrents (${mirror}): ${e.message?.substring(0, 60)}`);
+            }
+          }
+        }
         return [];
       }
 
@@ -1152,19 +1464,139 @@ app.get('/api/search', async (req, res) => {
 
 /**
  * GET /api/library
- * Returns all albums in the local library
+ * Returns albums saved to the user's library
+ * Falls back to demo data if library is empty
  */
 app.get('/api/library', (req, res) => {
   try {
-    const albums = db.prepare('SELECT * FROM albums ORDER BY artist, title').all();
-    const fullAlbums = albums.map(album => {
+    // Fetch user library with full album details via JOIN
+    const library = db.prepare(`
+      SELECT a.*, ul.added_at, ul.pinned
+      FROM user_library ul
+      JOIN albums a ON a.id = ul.album_id
+      ORDER BY ul.added_at DESC
+    `).all();
+
+    if (library.length > 0) {
+      const fullAlbums = library.map(album => {
+        const tracks = db.prepare(
+          'SELECT * FROM tracks WHERE album_id = ? ORDER BY track_number'
+        ).all(album.id);
+        return { ...album, tracks };
+      });
+      return res.json({ success: true, albums: fullAlbums });
+    }
+
+    // Library is empty — seed with demo albums automatically
+    const demoAlbums = [
+      {
+        id: 'album-1', title: 'Midnight Dreams', artist: 'Synthetic Minds', year: 2023,
+        tracks: [
+          { id: 't1', title: 'Awakening', duration: '3:42' },
+          { id: 't2', title: 'Binary Sunset', duration: '4:15' },
+          { id: 't3', title: 'Quantum Loop', duration: '2:58' },
+          { id: 't4', title: 'Infinite Echo', duration: '5:12' }
+        ]
+      },
+      {
+        id: 'album-2', title: 'Neural Networks', artist: 'Cyber Collective', year: 2023,
+        tracks: [
+          { id: 't5', title: 'Connection', duration: '4:00' },
+          { id: 't6', title: 'Signal', duration: '3:30' },
+          { id: 't7', title: 'Resonance', duration: '4:45' }
+        ]
+      }
+    ];
+
+    const insertAlbum = db.prepare(
+      'INSERT OR IGNORE INTO albums (id, title, artist, year, track_count) VALUES (?, ?, ?, ?, ?)'
+    );
+    const insertTrack = db.prepare(
+      'INSERT OR IGNORE INTO tracks (id, album_id, artist, title, duration, track_number) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    const insertLibrary = db.prepare(
+      'INSERT OR IGNORE INTO user_library (id, album_id) VALUES (?, ?)'
+    );
+
+    for (const album of demoAlbums) {
+      insertAlbum.run(album.id, album.title, album.artist, album.year, album.tracks.length);
+      insertLibrary.run(uuidv4(), album.id);
+      for (let i = 0; i < album.tracks.length; i++) {
+        const t = album.tracks[i];
+        insertTrack.run(t.id, album.id, album.artist, t.title, t.duration, i + 1);
+      }
+    }
+
+    // Return the freshly-seeded demo albums
+    const seeded = db.prepare(`
+      SELECT a.* FROM user_library ul
+      JOIN albums a ON a.id = ul.album_id
+      ORDER BY ul.added_at DESC
+    `).all();
+
+    const fullSeeded = seeded.map(album => {
       const tracks = db.prepare(
         'SELECT * FROM tracks WHERE album_id = ? ORDER BY track_number'
       ).all(album.id);
       return { ...album, tracks };
     });
-    res.json({ success: true, albums: fullAlbums });
+
+    res.json({ success: true, albums: fullSeeded, seeded: true });
   } catch (error) {
+    console.error('Library error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/library
+ * Add an album to the user's library
+ * Body: { id, title, artist, year, cover, trackCount }
+ */
+app.post('/api/library', (req, res) => {
+  const { id, title, artist, year, cover, trackCount } = req.body;
+
+  if (!id || !title || !artist) {
+    return res.status(400).json({ success: false, error: 'Missing required fields: id, title, artist' });
+  }
+
+  try {
+    // Ensure album exists in the albums cache
+    db.prepare(
+      `INSERT OR IGNORE INTO albums (id, title, artist, year, cover_url, track_count)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, title, artist, year || null, cover || null, trackCount || 0);
+
+    // Add to user library
+    db.prepare(
+      'INSERT OR IGNORE INTO user_library (id, album_id) VALUES (?, ?)'
+    ).run(uuidv4(), id);
+
+    console.log(`📚 Added to library: ${artist} - ${title}`);
+    res.json({ success: true, albumId: id, message: `Added "${title}" to library` });
+  } catch (error) {
+    console.error('Library add error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/library/:albumId
+ * Remove an album from the user's library
+ */
+app.delete('/api/library/:albumId', (req, res) => {
+  const { albumId } = req.params;
+
+  if (!albumId) {
+    return res.status(400).json({ success: false, error: 'Missing albumId' });
+  }
+
+  try {
+    db.prepare('DELETE FROM user_library WHERE album_id = ?').run(albumId);
+    console.log(`📚 Removed from library: ${albumId}`);
+    res.json({ success: true, albumId, message: 'Removed from library' });
+  } catch (error) {
+    console.error('Library remove error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
