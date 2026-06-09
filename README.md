@@ -99,7 +99,7 @@ SonicSwarm has a dark-themed, three-panel interface inspired by the best desktop
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/sonicswarm.git
+git clone https://github.com/m2af/sonic-swarm.git
 cd sonicswarm
 
 # Install dependencies
