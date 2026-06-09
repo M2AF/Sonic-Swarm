@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square, Compass, PlusCircle, CheckCircle } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, Search, Music, Disc, Radio, Sliders, HardDrive, Users, Zap, AlertCircle, Loader, Volume2, Clock, Clipboard, ChevronDown, ChevronUp, Square, Compass, PlusCircle, CheckCircle, X, Trash2 } from 'lucide-react';
 import { useSonicSwarm } from './SonicSwarmContext';
 import './App.css';
 
@@ -42,7 +42,7 @@ const DEMO_LIBRARY = [
 // DISCOVER CATALOG VIEW (Global MusicBrainz search wall)
 // ─────────────────────────────────────────────────────────
 
-function DiscoverCatalogView({ onSelectAlbum, onAddToLibrary, searchQuery, setSearchQuery, searchResults, searchLoading, searchError, handleSearch }) {
+function DiscoverCatalogView({ onSelectAlbum, onAddToLibrary, isInLibrary, searchQuery, setSearchQuery, searchResults, searchLoading, searchError, handleSearch }) {
 
   // Clean "Start Screen" if the user hasn't searched yet
   if (!searchQuery && searchResults.length === 0) {
@@ -95,15 +95,17 @@ function DiscoverCatalogView({ onSelectAlbum, onAddToLibrary, searchQuery, setSe
             <p>{result.artist}</p>
             {result.year && <span className="year">{result.year}</span>}
             <button
-              className="library-add-btn"
+              className={`library-add-btn${isInLibrary?.(result.id) ? ' in-library' : ''}`}
               onClick={(e) => {
                 e.stopPropagation();
-                onAddToLibrary(result);
+                if (!isInLibrary?.(result.id)) onAddToLibrary(result);
               }}
-              title="Add to Library"
+              title={isInLibrary?.(result.id) ? 'Already in Library' : 'Add to Library'}
+              disabled={isInLibrary?.(result.id)}
             >
-              <PlusCircle size={14} />
-              Add
+              {isInLibrary?.(result.id)
+                ? <><CheckCircle size={14} /> In Library</>
+                : <><PlusCircle size={14} /> Add</>}
             </button>
           </div>
         ))}
@@ -124,7 +126,7 @@ function SourcePickerDrawer({ track, album, inspectingTrackId, setInspectingTrac
   // Auto-trigger the scraper when the drawer opens
   useEffect(() => {
     if (isInspecting) {
-      fetchSources(album.artist, album.title, track.title);
+      fetchSources(album.artist, album.title, track.title, album.id);
     }
   }, [isInspecting, album, track, fetchSources]);
 
@@ -422,7 +424,8 @@ export default function App() {
         const data = await sonicSwarm.resolveTorrent(
           currentAlbum.artist,
           track.title,
-          currentAlbum.title
+          currentAlbum.title,
+          currentAlbum.id   // iTunes ID — enables ⚡ fast-path index lookup
         );
 
         setCurrentTorrentData(data);
@@ -744,8 +747,11 @@ export default function App() {
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <Radio className="logo-icon" />
-          <h1>SonicSwarm</h1>
+          <img
+            src="/sonicswarm_logo.png"
+            alt="SonicSwarm Logo"
+            className="brand-logo-img"
+          />
         </div>
 
         <nav className="sidebar-nav">
@@ -825,6 +831,11 @@ export default function App() {
             <span className="stat-item">
               ↓ {sonicSwarm.swarmStats.totalDownloadSpeed} MB/s
             </span>
+            <img
+              src="/small_logo.png"
+              alt="SonicSwarm Symbol"
+              className="header-avatar-symbol"
+            />
           </div>
         </header>
 
@@ -879,15 +890,17 @@ export default function App() {
                             )}
                           </div>
                           <button
-                            className="library-add-btn"
+                            className={`library-add-btn${sonicSwarm.isInLibrary(album.id) ? ' in-library' : ''}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              sonicSwarm.addToLibrary(album);
+                              if (!sonicSwarm.isInLibrary(album.id)) sonicSwarm.addToLibrary(album);
                             }}
-                            title="Add to Library"
+                            title={sonicSwarm.isInLibrary(album.id) ? 'Already in Library' : 'Add to Library'}
+                            disabled={sonicSwarm.isInLibrary(album.id)}
                           >
-                            <PlusCircle size={16} />
-                            Add
+                            {sonicSwarm.isInLibrary(album.id)
+                              ? <><CheckCircle size={16} /> In Library</>
+                              : <><PlusCircle size={16} /> Add</>}
                           </button>
                         </div>
                       ))}
@@ -951,13 +964,39 @@ export default function App() {
           {view === 'library' && (
             <div className="library-view">
               <h2>Your Library</h2>
+
+              {sonicSwarm.libraryLoading && (
+                <div className="loading">
+                  <Loader size={24} className="spinning" />
+                  <span>Loading library...</span>
+                </div>
+              )}
+
+              {!sonicSwarm.libraryLoading && Array.isArray(sonicSwarm.libraryAlbums) && sonicSwarm.libraryAlbums.length === 0 && (
+                <div className="library-empty-state">
+                  <Music size={48} />
+                  <h3>Your library is empty</h3>
+                  <p>Browse Discover or search for albums and hit <strong>Add</strong> to save them here.</p>
+                </div>
+              )}
+
               <div className="album-grid">
-                {(Array.isArray(sonicSwarm.libraryAlbums) && sonicSwarm.libraryAlbums.length > 0 ? sonicSwarm.libraryAlbums : DEMO_LIBRARY).map(album => (
+                {Array.isArray(sonicSwarm.libraryAlbums) && sonicSwarm.libraryAlbums.map(album => (
                   <div
                     key={album.id}
-                    className="album-card"
+                    className="album-card library-card"
                     onClick={() => handlePlayAlbum(album)}
                   >
+                    <button
+                      className="library-remove-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        sonicSwarm.removeFromLibrary(album.id);
+                      }}
+                      title="Remove from Library"
+                    >
+                      <X size={14} />
+                    </button>
                     <div className="album-art">
                       {album.cover_url || album.coverUrl || album.cover ? (
                         <img src={album.cover_url || album.coverUrl || album.cover} alt={album.title} />
@@ -979,6 +1018,7 @@ export default function App() {
             <DiscoverCatalogView
               onSelectAlbum={(album) => handlePlayAlbum(album)}
               onAddToLibrary={(album) => sonicSwarm.addToLibrary(album)}
+              isInLibrary={sonicSwarm.isInLibrary}
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
               searchResults={sonicSwarm.searchResults}
@@ -1050,12 +1090,14 @@ export default function App() {
                     <p className="year">{currentAlbum.year}</p>
 
                     <button
-                      className="library-add-btn album-add-btn"
-                      onClick={() => sonicSwarm.addToLibrary(currentAlbum)}
-                      title="Add to Library"
+                      className={`library-add-btn album-add-btn${sonicSwarm.isInLibrary(currentAlbum?.id) ? ' in-library' : ''}`}
+                      onClick={() => { if (!sonicSwarm.isInLibrary(currentAlbum?.id)) sonicSwarm.addToLibrary(currentAlbum); }}
+                      title={sonicSwarm.isInLibrary(currentAlbum?.id) ? 'Already in Library' : 'Add to Library'}
+                      disabled={sonicSwarm.isInLibrary(currentAlbum?.id)}
                     >
-                      <PlusCircle size={16} />
-                      Add to Library
+                      {sonicSwarm.isInLibrary(currentAlbum?.id)
+                        ? <><CheckCircle size={16} /> In Library</>
+                        : <><PlusCircle size={16} /> Add to Library</>}
                     </button>
 
                     <div className="status-badges">

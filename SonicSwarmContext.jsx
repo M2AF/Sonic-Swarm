@@ -247,36 +247,56 @@ export const SonicSwarmProvider = ({ children }) => {
   const addToLibrary = useCallback(async (album) => {
     if (!album) return;
 
+    // Client-side duplicate guard — instant, no server round-trip needed
+    const alreadyAdded = libraryAlbums.some(a => a.id === album.id);
+    if (alreadyAdded) return { alreadyInLibrary: true };
+
+    // Optimistic update: add to state immediately so UI responds instantly
+    const normalized = {
+      id:         album.id,
+      title:      album.title,
+      artist:     album.artist,
+      year:       album.year || null,
+      cover_url:  album.cover || album.coverUrl || album.artworkUrl || null,
+      track_count: album.trackCount || album.track_count || album.tracks?.length || 0
+    };
+    setLibraryAlbums(prev => [...prev, normalized]);
+
     try {
       const response = await fetch(`${API_BASE}/api/library`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: album.id,
-          title: album.title,
-          artist: album.artist,
-          year: album.year || null,
-          cover: album.cover || album.coverUrl || album.artworkUrl || null,
+          id:         album.id,
+          title:      album.title,
+          artist:     album.artist,
+          year:       album.year || null,
+          cover:      album.cover || album.coverUrl || album.artworkUrl || null,
           trackCount: album.trackCount || album.track_count || album.tracks?.length || 0
         })
       });
 
       if (!response.ok) throw new Error('Failed to add to library');
 
-      // Refresh library to reflect the addition
-      await fetchLibrary();
-      return true;
+      const data = await response.json();
+      return data;
     } catch (error) {
+      // Revert optimistic update on failure
+      setLibraryAlbums(prev => prev.filter(a => a.id !== album.id));
       console.error('Add to library error:', error);
       return false;
     }
-  }, [fetchLibrary]);
+  }, [fetchLibrary, libraryAlbums]);
 
   /**
    * Remove an album from the user's library
    */
   const removeFromLibrary = useCallback(async (albumId) => {
     if (!albumId) return;
+
+    // Optimistic update: remove from state immediately
+    const snapshot = libraryAlbums;
+    setLibraryAlbums(prev => prev.filter(a => a.id !== albumId));
 
     try {
       const response = await fetch(`${API_BASE}/api/library/${encodeURIComponent(albumId)}`, {
@@ -285,14 +305,14 @@ export const SonicSwarmProvider = ({ children }) => {
 
       if (!response.ok) throw new Error('Failed to remove from library');
 
-      // Refresh library
-      await fetchLibrary();
       return true;
     } catch (error) {
+      // Revert on failure
+      setLibraryAlbums(snapshot);
       console.error('Remove from library error:', error);
       return false;
     }
-  }, [fetchLibrary]);
+  }, [libraryAlbums]);
 
   /**
    * Check if an album ID is already in the library
@@ -309,7 +329,7 @@ export const SonicSwarmProvider = ({ children }) => {
    * Fetch metadata + source options for a track (Stremio/Torrentio pattern)
    * Returns album metadata, full tracklist, and prioritized source magnets
    */
-  const fetchSources = useCallback(async (artist, album, track) => {
+  const fetchSources = useCallback(async (artist, album, track, itunesId = null) => {
     if (!serverConnected) {
       throw new Error('Server not connected');
     }
@@ -321,7 +341,7 @@ export const SonicSwarmProvider = ({ children }) => {
       const response = await fetch(`${API_BASE}/api/sources`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, album, track })
+        body: JSON.stringify({ artist, album, track, itunesId })
       });
 
       if (!response.ok) throw new Error('Failed to fetch sources');
@@ -346,7 +366,7 @@ export const SonicSwarmProvider = ({ children }) => {
    * Resolve a track to torrent magnet links
    * Uses cache to avoid repeated queries
    */
-  const resolveTorrent = useCallback(async (artist, track, album = '') => {
+  const resolveTorrent = useCallback(async (artist, track, album = '', itunesId = null) => {
     const cacheKey = `${artist}|${track}|${album}`;
 
     // Check cache
@@ -363,7 +383,7 @@ export const SonicSwarmProvider = ({ children }) => {
       const response = await fetch(`${API_BASE}/api/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, track, album })
+        body: JSON.stringify({ artist, track, album, itunesId })
       });
 
       if (!response.ok) throw new Error('Resolution failed');
@@ -390,7 +410,7 @@ export const SonicSwarmProvider = ({ children }) => {
   /**
    * Start streaming a magnet link
    */
-  const startStream = useCallback(async (magnet, targetTrackTitle = null) => {
+  const startStream = useCallback(async (magnet, targetTrackTitle = null, trackNumber = null) => {
     if (!magnet) {
       throw new Error('No magnet URI provided');
     }
@@ -405,7 +425,7 @@ export const SonicSwarmProvider = ({ children }) => {
       const response = await fetch(`${API_BASE}/api/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ magnet, targetTrackTitle })
+        body: JSON.stringify({ magnet, targetTrackTitle, trackNumber })
       });
 
       if (!response.ok) throw new Error('Stream failed');

@@ -2,3 +2,4 @@ node_modules
 gemini advice.md
 dist/
 data/
+.env

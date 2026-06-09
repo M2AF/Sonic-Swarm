@@ -7,13 +7,19 @@
  * Frontend: http://localhost:9191
  */
 
+import dotenv from 'dotenv';
+import path, { resolve } from 'path';
+
+// Explicitly load .env from project root — works reliably in ES modules
+// regardless of which subdirectory server.js lives in
+dotenv.config({ path: resolve(process.cwd(), '.env') });
+
 import express from 'express';
 import torrentStream from 'torrent-stream';
 import axios from 'axios';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import Database from 'better-sqlite3';
-import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
@@ -45,6 +51,16 @@ fs.mkdirSync(dataDir, { recursive: true });
 const dbPath = path.join(dataDir, 'sonicswarm.db');
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
+
+// Bump this string whenever you add/remove a provider.
+// It busts all stale empty-result caches automatically on restart.
+const PROVIDER_SET_VERSION = 'v5-prowlarr';
+
+// Log which optional integrations are active at startup
+console.log('🔌 Optional integrations:',
+  process.env.PROWLARR_URL  ? `Prowlarr @ ${process.env.PROWLARR_URL}` : 'Prowlarr (not configured)',
+  process.env.JACKETT_URL   ? `| Jackett @ ${process.env.JACKETT_URL}` : ''
+);
 
 // ─────────────────────────────────────────────────────────
 // DATABASE INITIALIZATION
@@ -131,12 +147,41 @@ function initializeDatabase() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_torrent_query_cache_age ON torrent_query_cache(created_at);
+
+    -- Torrentio-style pre-built index: iTunes ID → torrent magnets
+    -- Populated by background indexer, queried instantly at request time
+    CREATE TABLE IF NOT EXISTS torrent_index (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      itunes_id   TEXT    NOT NULL,
+      info_hash   TEXT    NOT NULL,
+      magnet      TEXT    NOT NULL,
+      file_name   TEXT,
+      seeders     INTEGER DEFAULT 0,
+      quality     TEXT,
+      source      TEXT,
+      artist      TEXT,
+      album       TEXT,
+      indexed_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(itunes_id, info_hash)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_torrent_index_itunes ON torrent_index(itunes_id);
+    CREATE INDEX IF NOT EXISTS idx_torrent_index_age    ON torrent_index(indexed_at DESC);
   `);
 
   // Seed demo data if tables are empty
   const albumCount = db.prepare('SELECT COUNT(*) as count FROM albums').get().count;
   if (albumCount === 0) {
     seedDemoData();
+  }
+
+  // Purge empty-result cache entries from old provider sets so new sources get queried.
+  // Only purges entries that cached an empty result — real torrent hits are kept.
+  const purged = db.prepare(
+    `DELETE FROM torrent_query_cache WHERE results_json = '[]' AND query_hash NOT LIKE ?`
+  ).run(`${PROVIDER_SET_VERSION}|%`);
+  if (purged.changes > 0) {
+    console.log(`🧹 Purged ${purged.changes} stale empty-result cache entries (provider set upgraded)`);
   }
 
   console.log('✓ Database initialized');
@@ -425,12 +470,57 @@ function setCache(cacheKey, results) {
  * Torrent Resolver - queries database + external APIs
  * Returns magnet links for a given artist + track
  */
-async function resolveMusicTorrent(artist, track, album = '') {
-  const cacheKey = `${artist}|${track}|${album}`.toLowerCase();
-  const startTime = Date.now();
-  console.log(`🔍 [${new Date().toISOString()}] Resolving: ${artist} - ${track}${album ? ` [${album}]` : ''}`);
+// In-flight deduplication: if the same query is already running, wait for it
+// instead of launching a second parallel fetch. Prevents the UI's multi-click
+// storm from spawning 5 identical 16s timeout races simultaneously.
+const inFlightResolves = new Map(); // cacheKey → Promise
 
+async function resolveMusicTorrent(artist, track, album = '', itunesId = null, backgroundJob = false) {
+  const cacheKey = `${PROVIDER_SET_VERSION}|${artist}|${track}|${album}`.toLowerCase();
+  const startTime = Date.now();
+  console.log(`🔍 [${new Date().toISOString()}] Resolving: ${artist} - ${track}${album ? ` [${album}]` : ''}${itunesId ? ` (iTunes: ${itunesId})` : ''}`);
+
+  // Dedup: if an identical query is already in-flight, piggyback on it
+  if (inFlightResolves.has(cacheKey)) {
+    console.log(`⏳ Dedup: waiting on in-flight resolve for "${artist} - ${track}"`);
+    return inFlightResolves.get(cacheKey);
+  }
+
+  const resolvePromise = _doResolveMusicTorrent(artist, track, album, itunesId, backgroundJob, cacheKey, startTime);
+  inFlightResolves.set(cacheKey, resolvePromise);
+  resolvePromise.finally(() => inFlightResolves.delete(cacheKey));
+  return resolvePromise;
+}
+
+async function _doResolveMusicTorrent(artist, track, album, itunesId, backgroundJob, cacheKey, startTime) {
   try {
+    // 0. Fast-path: check pre-built torrent_index by iTunes ID (Torrentio-style)
+    //    This is a sub-millisecond DB lookup — no network I/O at all
+    if (itunesId) {
+      const TWELVE_HOURS = 12 * 60 * 60; // seconds
+      const indexed = db.prepare(`
+        SELECT * FROM torrent_index
+        WHERE itunes_id = ?
+          AND indexed_at > (unixepoch() - ?)
+          AND seeders > 0
+        ORDER BY seeders DESC
+        LIMIT 8
+      `).all(itunesId, TWELVE_HOURS);
+
+      if (indexed.length > 0) {
+        console.log(`⚡ Index hit for ${itunesId}: ${indexed.length} results (${Date.now() - startTime}ms)`);
+        return indexed.map(r => ({
+          magnet:   r.magnet,
+          seeders:  r.seeders,
+          leechers: 0,
+          fileName: r.file_name,
+          quality:  r.quality || 'Unknown',
+          source:   r.source,
+          confidence: 'high'
+        }));
+      }
+    }
+
     // 1. Check database cache first — only real torrents with seeders
     const cachedTorrents = db.prepare(`
       SELECT * FROM torrents 
@@ -465,22 +555,21 @@ async function resolveMusicTorrent(artist, track, album = '') {
       return emptyCached;
     }
 
-    // 3. Query all trackers in parallel — collect from every source, deduplicate
-    console.log(`⏱️  Starting parallel tracker queries (10s budget, all sources)...`);
+    // 3. Query JSON APIs in parallel — allSettled collects all results, dedup by hash
+    console.log(`⏱️  Querying tracker APIs (8s budget)...`);
 
+    // Background jobs skip SolidTorrents to preserve its rate-limit budget for real users
     const queryPromises = [
+      queryTrackerAPI(artist, track, 'prowlarr',      album, 15000), // Local aggregator — slow but thorough
       queryTrackerAPI(artist, track, 'piratebay',     album, 5000),
-      queryTrackerAPI(artist, track, 'solidtorrents', album, 5000),
-      queryTrackerAPI(artist, track, '1337x',         album, 8000),
-      queryTrackerAPI(artist, track, 'torrentgalaxy', album, 5000),
-      queryTrackerAPI(artist, track, 'bitsearch',     album, 5000),
-      queryTrackerAPI(artist, track, 'nyaa',          album, 5000),
-      queryTrackerAPI(artist, track, 'kickass',       album, 5000),
+      queryTrackerAPI(artist, track, 'bitsearch',     album, 6000),
+      queryTrackerAPI(artist, track, 'torrentgalaxy', album, 6000),
+      ...(backgroundJob ? [] : [queryTrackerAPI(artist, track, 'solidtorrents', album, 5000)]),
+      queryTrackerAPI(artist, track, 'knaben',        album, 7000),
       queryTrackerAPI(artist, track, 'jackett',       album, 5000),
     ];
 
-    // Race: allSettled vs 10s global timeout — collect every provider that finishes in time
-    const GLOBAL_TIMEOUT = 10000;
+    const GLOBAL_TIMEOUT = 16000;
     const settled = await Promise.race([
       Promise.allSettled(queryPromises),
       new Promise(resolve =>
@@ -488,7 +577,7 @@ async function resolveMusicTorrent(artist, track, album = '') {
       )
     ]);
 
-    // Flatten + deduplicate by info-hash extracted from magnet URI
+    // Flatten + deduplicate by info-hash
     const seen = new Set();
     const allTorrents = settled
       .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
@@ -503,7 +592,7 @@ async function resolveMusicTorrent(artist, track, album = '') {
       });
 
     const providerHits = settled.filter(r => r.status === 'fulfilled' && r.value?.length > 0).length;
-    console.log(`📡 Aggregated ${allTorrents.length} unique torrents across ${providerHits} providers (${Date.now() - startTime}ms)`);
+    console.log(`📡 ${allTorrents.length} unique results across ${providerHits} providers (${Date.now() - startTime}ms)`);
 
     // 4. Cache the result — even if empty (prevents re-spamming trackers for 1hr)
     setCache(cacheKey, allTorrents);
@@ -538,6 +627,25 @@ async function resolveMusicTorrent(artist, track, album = '') {
           torrent.seeders, torrent.leechers, torrent.fileName,
           torrent.quality || 'Unknown', torrent.source);
       }
+    }
+
+    // 7. Write results into torrent_index if we have an iTunes ID (pre-builds the fast path)
+    if (itunesId && ranked.length > 0) {
+      const upsertIndex = db.prepare(`
+        INSERT OR REPLACE INTO torrent_index
+          (itunes_id, info_hash, magnet, file_name, seeders, quality, source, artist, album, indexed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+      `);
+      for (const t of ranked) {
+        const hashMatch = t.magnet?.match(/urn:btih:([a-fA-F0-9]{32,40})/i);
+        if (hashMatch) {
+          try {
+            upsertIndex.run(itunesId, hashMatch[1].toLowerCase(), t.magnet,
+              t.fileName, t.seeders, t.quality || 'Unknown', t.source, artist, album || track);
+          } catch(_) {}
+        }
+      }
+      console.log(`💾 Wrote ${ranked.length} entries to torrent_index for ${itunesId}`);
     }
 
     console.log(`✅ Returning ${ranked.length} torrents (total time: ${Date.now() - startTime}ms)`);
@@ -639,14 +747,14 @@ async function queryTrackerAPI(artist, track, source, album = '', timeout = 5000
       }
 
       case 'solidtorrents': {
-        // SolidTorrents has a public JSON API, less aggressively blocked
+        // SolidTorrents has a public JSON API — skip gracefully on 429 rate-limit
         const query = encodeURIComponent(`${artist} ${track}`);
 
         try {
           const resp = await fetchWithRetry(
             `https://solidtorrents.to/api/v1/search?q=${query}&category=Music&sort=seeders`,
             { timeout },
-            2
+            1   // Only 1 attempt — retrying a 429 just makes rate-limiting worse
           );
 
           if (resp?.data?.results && Array.isArray(resp.data.results)) {
@@ -669,6 +777,75 @@ async function queryTrackerAPI(artist, track, source, album = '', timeout = 5000
           }
         } catch (e) {
           console.log(`  ✗ SolidTorrents: ${e.message?.substring(0, 60)}`);
+        }
+
+        return [];
+      }
+
+      case 'prowlarr': {
+        // Prowlarr — self-hosted indexer aggregator (100+ trackers via one local API call)
+        // Install: https://prowlarr.com  →  default port 9696
+        // Set env vars: PROWLARR_URL=http://localhost:9696  PROWLARR_API_KEY=xxxxxxxx
+        // In Prowlarr UI: Settings → General → copy the API Key
+        // Add indexers: Indexers → + Add Indexer → search "music" / "general"
+        //   Recommended: 1337x, Knaben, TorrentGalaxy, BTdigg, Rutracker (music), GazelleGames
+        //
+        // Prowlarr uses the same Torznab format as Jackett — same response shape,
+        // just a different URL path: /prowlarr/api/v1/search  (not /api/v2.0/indexers/all/results)
+        const baseUrl = process.env.PROWLARR_URL;
+        const apiKey  = process.env.PROWLARR_API_KEY;
+
+        if (!baseUrl || !apiKey) return []; // Not configured — skip silently
+
+        // Try track query first, then fall back to album query
+        const queries = [
+          `${artist} ${track}`,
+          album ? `${artist} ${album}` : null
+        ].filter(Boolean);
+
+        for (const q of queries) {
+          try {
+            // Direct install (Windows) = /api/v1/search
+            // Docker/reverse-proxy = /prowlarr/api/v1/search
+            const url = `${baseUrl}/api/v1/search` +
+              `?apikey=${apiKey}` +
+              `&query=${encodeURIComponent(q)}` +
+              `&categories[]=3000` +  // 3000 = Audio (all music)
+              `&categories[]=3010` +  // 3010 = Audio/MP3
+              `&categories[]=3040` +  // 3040 = Audio/Lossless
+              `&type=search`;
+
+            const resp = await fetchWithRetry(url, { timeout }, 0); // No retry — slow aggregator, one shot
+
+            if (resp?.data && Array.isArray(resp.data)) {
+              const results = resp.data
+                .filter(item => (item.seeders || 0) > 0 && (item.magnetUrl || item.infoHash || item.downloadUrl))
+                .slice(0, 12)  // Prowlarr returns many results — take more
+                .map(item => {
+                  const hash = (item.infoHash || '').toLowerCase();
+                  return {
+                    magnet:   item.magnetUrl || buildMagnet(hash, item.title),
+                    fileName: item.title,
+                    seeders:  item.seeders  || 0,
+                    leechers: item.leechers || 0,
+                    quality:  detectQuality(item.title),
+                    source:   `Prowlarr/${item.indexer || 'multi'}`
+                  };
+                })
+                .filter(t => t.magnet.startsWith('magnet:'));
+
+              if (results.length > 0) {
+                console.log(`  ✓ Prowlarr: ${results.length} results from ${new Set(results.map(r => r.source)).size} indexers (${Date.now() - queryStart}ms)`);
+                return results;
+              }
+            }
+          } catch (e) {
+            // Log but don't crash — Prowlarr is optional
+            if (!e.message?.includes('ECONNREFUSED') && !e.message?.includes('ENOTFOUND')) {
+              console.log(`  ✗ Prowlarr: ${e.message?.substring(0, 60)}`);
+            }
+            // ECONNREFUSED = not running yet, skip silently
+          }
         }
 
         return [];
@@ -713,186 +890,105 @@ async function queryTrackerAPI(artist, track, source, album = '', timeout = 5000
         return [];
       }
 
-      case '1337x': {
-        // Two-step: search results → visit each torrent page for magnet link
-        // Music category only. Tries multiple mirrors for reliability.
-        const mirrors = [
-          'https://1337x.to',
-          'https://1337x.st',
-          'https://1337x.is',
-          'https://1337x.gd'
-        ];
-        const trackQuery  = encodeURIComponent(`${artist} ${track}`);
-        const albumQuery  = album ? encodeURIComponent(`${artist} ${album}`) : null;
-
-        for (const mirror of mirrors) {
-          for (const q of [trackQuery, albumQuery].filter(Boolean)) {
-            try {
-              const resp = await fetchWithRetry(
-                `${mirror}/category-search/${q}/Music/1/`,
-                { timeout: Math.min(timeout - 2000, 4000) },
-                1
-              );
-              const html = resp.data;
-
-              // Extract torrent detail page links e.g. /torrent/5483953/name/
-              const linkRe = /href="(\/torrent\/\d+\/[^"]+)"/g;
-              const detailLinks = [...new Set([...html.matchAll(linkRe)].map(m => m[1]))].slice(0, 4);
-              if (detailLinks.length === 0) continue;
-
-              // Extract name, seeds, leeches from search table
-              const nameRe  = /class="name"[^>]*>[\s\S]*?<a[^>]+href="\/torrent\/\d+\/[^"]*"[^>]*>([^<]+)<\/a>/g;
-              const seedRe  = /<td class="seeds">(\d+)<\/td>/g;
-              const leechRe = /<td class="leeches">(\d+)<\/td>/g;
-              const names   = [...html.matchAll(nameRe)].map(m => m[1].trim());
-              const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
-              const leeches = [...html.matchAll(leechRe)].map(m => parseInt(m[1]) || 0);
-
-              // Fetch magnet from each detail page (capped at 3 to stay within timeout)
-              const detailResults = await Promise.allSettled(
-                detailLinks.slice(0, 3).map(async (link, i) => {
-                  const detailResp = await axios.get(`${mirror}${link}`, {
-                    timeout: 3000,
-                    headers: { 'User-Agent': getRandomUserAgent() }
-                  });
-                  const magnetMatch = detailResp.data.match(/href="(magnet:\?xt=urn:btih:[^"&]+[^"]*?)"/i);
-                  const hashMatch   = detailResp.data.match(/urn:btih:([a-fA-F0-9]{40}|[A-Z2-7]{32})/i);
-                  const name = names[i] || link.split('/').filter(Boolean).pop()?.replace(/-/g, ' ') || '';
-                  if (magnetMatch) {
-                    return {
-                      magnet:   magnetMatch[1].replace(/&amp;/g, '&'),
-                      fileName: name,
-                      seeders:  seeds[i] ?? 0,
-                      leechers: leeches[i] ?? 0,
-                      quality:  detectQuality(name),
-                      source:   '1337x'
-                    };
-                  } else if (hashMatch) {
-                    return {
-                      magnet:   buildMagnet(hashMatch[1], name),
-                      fileName: name,
-                      seeders:  seeds[i] ?? 0,
-                      leechers: leeches[i] ?? 0,
-                      quality:  detectQuality(name),
-                      source:   '1337x'
-                    };
-                  }
-                  return null;
-                })
-              );
-
-              const results = detailResults
-                .filter(r => r.status === 'fulfilled' && r.value)
-                .map(r => r.value);
-
-              if (results.length > 0) {
-                console.log(`  ✓ 1337x (${mirror}): ${results.length} results (${Date.now() - queryStart}ms)`);
-                return results;
-              }
-            } catch (e) {
-              console.log(`  ✗ 1337x (${mirror}): ${e.message?.substring(0, 60)}`);
-            }
-          }
-        }
-        return [];
-      }
-
-      case 'torrentgalaxy': {
-        // TorrentGalaxy — music cat=15. Info-hash embedded in torrent page links.
-        const mirrors = [
-          'https://tgx.rs',
-          'https://torrentgalaxy.to',
-          'https://torrentgalaxy.mx'
-        ];
+      case 'knaben': {
+        // Knaben.eu — public REST aggregator, indexes 50+ torrent sites, no API key needed
+        // Music = category 400. Returns JSON with infohash + seeder data directly.
         const queries = [
-          encodeURIComponent(`${artist} ${track}`),
-          album ? encodeURIComponent(`${artist} ${album}`) : null
+          `${artist} ${track}`,
+          album ? `${artist} ${album}` : null
         ].filter(Boolean);
 
-        for (const mirror of mirrors) {
-          for (const q of queries) {
-            try {
-              const resp = await fetchWithRetry(
-                `${mirror}/torrents.php?search=${q}&cat=15`,
-                { timeout },
-                1
-              );
-              const html = resp.data;
+        for (const q of queries) {
+          try {
+            const resp = await axios.post(
+              'https://knaben.eu/api/v1',
+              {
+                search_term: q,
+                categories:  [400],       // 400 = Audio/Music
+                order_by:    'seeders',
+                amount:      20,
+                from:        0,
+                hide_unsafe: false
+              },
+              {
+                timeout,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'User-Agent':   getRandomUserAgent()
+                }
+              }
+            );
 
-              // TGx: href="/torrent/INFOHASH/torrent-name"
-              const hashRe  = /href="\/torrent\/([a-fA-F0-9]{40})\/([^"]+)"/g;
-              const seedRe  = /class="[^"]*tgxtableseeds[^"]*"[^>]*><[^>]*>(\d+)/g;
-              const leechRe = /class="[^"]*tgxtableleeches[^"]*"[^>]*><[^>]*>(\d+)/g;
+            const hits = resp.data?.hits || resp.data?.data || resp.data || [];
+            if (!Array.isArray(hits) || hits.length === 0) continue;
 
-              const hashes  = [...html.matchAll(hashRe)];
-              const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
-              const leeches = [...html.matchAll(leechRe)].map(m => parseInt(m[1]) || 0);
-
-              if (hashes.length === 0) continue;
-
-              const results = hashes.slice(0, 6).map((m, i) => {
-                const hash = m[1];
-                const name = decodeURIComponent(m[2].replace(/-/g, ' '));
+            const results = hits
+              .filter(h => (h.seeders || h.Seeders || 0) > 0 && (h.info_hash || h.infohash || h.hash || h.InfoHash))
+              .slice(0, 8)
+              .map(h => {
+                const hash = h.info_hash || h.infohash || h.hash || h.InfoHash || '';
+                const name = h.title || h.Title || h.name || `${artist} ${track}`;
                 return {
-                  magnet:   buildMagnet(hash, name),
+                  magnet:   h.magnet || buildMagnet(hash, name),
                   fileName: name,
-                  seeders:  seeds[i] ?? 0,
-                  leechers: leeches[i] ?? 0,
+                  seeders:  parseInt(h.seeders || h.Seeders) || 0,
+                  leechers: parseInt(h.leechers || h.Leechers) || 0,
                   quality:  detectQuality(name),
-                  source:   'TorrentGalaxy'
+                  source:   'Knaben'
                 };
               });
 
-              if (results.length > 0) {
-                console.log(`  ✓ TorrentGalaxy: ${results.length} results (${Date.now() - queryStart}ms)`);
-                return results;
-              }
-            } catch (e) {
-              console.log(`  ✗ TorrentGalaxy (${mirror}): ${e.message?.substring(0, 60)}`);
+            if (results.length > 0) {
+              console.log(`  ✓ Knaben: ${results.length} results (${Date.now() - queryStart}ms)`);
+              return results;
             }
+          } catch (e) {
+            console.log(`  ✗ Knaben: ${e.message?.substring(0, 60)}`);
           }
         }
         return [];
       }
 
       case 'bitsearch': {
-        // Bitsearch.to — cat=3 is Audio/Music
+        // Bitsearch.to — public JSON search API, no key needed, good music coverage
+        // Returns hits with magnet links directly. Category 'audio' covers all music.
         const queries = [
-          encodeURIComponent(`${artist} ${track}`),
-          album ? encodeURIComponent(`${artist} ${album}`) : null
+          `${artist} ${track}`,
+          album ? `${artist} ${album}` : null
         ].filter(Boolean);
 
         for (const q of queries) {
           try {
             const resp = await fetchWithRetry(
-              `https://bitsearch.to/search?q=${q}&cat=3&p=1`,
-              { timeout },
+              `https://bitsearch.to/api/1/search?q=${encodeURIComponent(q)}&category=1&page=1`,
+              {
+                timeout,
+                headers: {
+                  'Accept': 'application/json',
+                  'Referer': 'https://bitsearch.to/'
+                }
+              },
               1
             );
-            const html = resp.data;
 
-            // Bitsearch embeds magnet links and hash data attributes
-            const magnetRe = /href="(magnet:\?xt=urn:btih:[^"]+)"/gi;
-            const hashRe   = /data-hash="([a-fA-F0-9]{40})"/g;
-            const titleRe  = /class="[^"]*title[^"]*"[^>]*>\s*<[^>]+>([^<]{4,80})</g;
-            const seedRe   = /class="[^"]*seeders?[^"]*"[^>]*>(\d+)/gi;
+            const hits = resp?.data?.data;
+            if (!Array.isArray(hits) || hits.length === 0) continue;
 
-            const magnets = [...html.matchAll(magnetRe)].map(m => m[1].replace(/&amp;/g, '&'));
-            const hashes  = [...html.matchAll(hashRe)].map(m => m[1]);
-            const titles  = [...html.matchAll(titleRe)].map(m => m[1].trim());
-            const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
-
-            const count = Math.max(magnets.length, hashes.length);
-            if (count === 0) continue;
-
-            const results = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
-              magnet:   magnets[i] || buildMagnet(hashes[i], titles[i] || `${artist} ${track}`),
-              fileName: titles[i] || `${artist} ${track}`,
-              seeders:  seeds[i] ?? 0,
-              leechers: 0,
-              quality:  detectQuality(titles[i] || ''),
-              source:   'Bitsearch'
-            })).filter(r => r.magnet);
+            const results = hits
+              .filter(h => (h.stats?.seeders || 0) > 0 && (h.info_hash || h.magnet))
+              .slice(0, 8)
+              .map(h => {
+                const hash = (h.info_hash || '').toLowerCase();
+                const name = h.name || `${artist} ${track}`;
+                return {
+                  magnet:   h.magnet || buildMagnet(hash, name),
+                  fileName: name,
+                  seeders:  parseInt(h.stats?.seeders) || 0,
+                  leechers: parseInt(h.stats?.leechers) || 0,
+                  quality:  detectQuality(name),
+                  source:   'Bitsearch'
+                };
+              });
 
             if (results.length > 0) {
               console.log(`  ✓ Bitsearch: ${results.length} results (${Date.now() - queryStart}ms)`);
@@ -905,110 +1001,61 @@ async function queryTrackerAPI(artist, track, source, album = '', timeout = 5000
         return [];
       }
 
-      case 'nyaa': {
-        // Nyaa.si RSS — category 2_0 = Audio. Returns XML with magnet links inline.
-        // Great for J-Pop, K-Pop, anime OSTs but indexes general music too.
+      case 'torrentgalaxy': {
+        // TorrentGalaxy — public tracker with a JSON search endpoint.
+        // Category 43 = Music. Returns results with magnet and seeder count.
         const queries = [
-          encodeURIComponent(`${artist} ${track}`),
-          album ? encodeURIComponent(`${artist} ${album}`) : null
+          `${artist} ${track}`,
+          album ? `${artist} ${album}` : null
         ].filter(Boolean);
 
         for (const q of queries) {
           try {
             const resp = await fetchWithRetry(
-              `https://nyaa.si/?page=rss&q=${q}&c=2_0&f=0`,
-              { timeout },
+              `https://torrentgalaxy.to/torrents.php?search=${encodeURIComponent(q)}&cat=43&lang=0&nox=2&sort=seeders&order=desc`,
+              {
+                timeout,
+                headers: {
+                  'Accept': 'application/json',
+                  'X-Requested-With': 'XMLHttpRequest',
+                  'Referer': 'https://torrentgalaxy.to/'
+                }
+              },
               1
             );
-            const xml = resp.data;
 
-            const itemRe   = /<item>([\s\S]*?)<\/item>/g;
-            const items    = [...xml.matchAll(itemRe)].map(m => m[1]);
-            if (items.length === 0) continue;
+            // TGX returns JSON array when called with the right headers
+            const hits = Array.isArray(resp?.data)
+              ? resp.data
+              : (resp?.data?.torrents || []);
 
-            const results = items.slice(0, 6).map(item => {
-              const titleMatch  = item.match(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/) ||
-                                  item.match(/<title>([^<]+)<\/title>/);
-              const magnetMatch = item.match(/<nyaa:magnetUri><!\[CDATA\[(magnet[^\]]+)\]\]>/) ||
-                                  item.match(/href="(magnet:[^"]+)"/);
-              const seedMatch   = item.match(/<nyaa:seeders>(\d+)<\/nyaa:seeders>/);
-              const leechMatch  = item.match(/<nyaa:leechers>(\d+)<\/nyaa:leechers>/);
+            if (!hits.length) continue;
 
-              if (!magnetMatch) return null;
-              const name = titleMatch?.[1]?.trim() || `${artist} ${track}`;
-              return {
-                magnet:   magnetMatch[1],
-                fileName: name,
-                seeders:  parseInt(seedMatch?.[1]) || 0,
-                leechers: parseInt(leechMatch?.[1]) || 0,
-                quality:  detectQuality(name),
-                source:   'Nyaa'
-              };
-            }).filter(Boolean);
+            const results = hits
+              .filter(h => (h.seeders || h.s || 0) > 0)
+              .slice(0, 8)
+              .map(h => {
+                const hash  = (h.hash || h.info_hash || '').toLowerCase();
+                const name  = h.name || h.title || `${artist} ${track}`;
+                const seeds = parseInt(h.seeders || h.s) || 0;
+                const leeches = parseInt(h.leechers || h.l) || 0;
+                return {
+                  magnet:   h.magnet || buildMagnet(hash, name),
+                  fileName: name,
+                  seeders:  seeds,
+                  leechers: leeches,
+                  quality:  detectQuality(name),
+                  source:   'TorrentGalaxy'
+                };
+              })
+              .filter(t => t.magnet.startsWith('magnet:'));
 
             if (results.length > 0) {
-              console.log(`  ✓ Nyaa: ${results.length} results (${Date.now() - queryStart}ms)`);
+              console.log(`  ✓ TorrentGalaxy: ${results.length} results (${Date.now() - queryStart}ms)`);
               return results;
             }
           } catch (e) {
-            console.log(`  ✗ Nyaa: ${e.message?.substring(0, 60)}`);
-          }
-        }
-        return [];
-      }
-
-      case 'kickass': {
-        // KickassTorrents mirrors — music category
-        const mirrors = [
-          'https://katcr.to',
-          'https://kickasstorrents.to',
-          'https://kat.am'
-        ];
-        const queries = [
-          encodeURIComponent(`${artist} ${track}`),
-          album ? encodeURIComponent(`${artist} ${album}`) : null
-        ].filter(Boolean);
-
-        for (const mirror of mirrors) {
-          for (const q of queries) {
-            try {
-              const resp = await fetchWithRetry(
-                `${mirror}/usearch/${q}/?category=music`,
-                { timeout },
-                1
-              );
-              const html = resp.data;
-
-              // KAT: magnet links in search results or data-torrent attributes
-              const magnetRe = /href="(magnet:\?xt=urn:btih:[^"]+)"/gi;
-              const hashRe   = /data-hash="([a-fA-F0-9]{40})"/g;
-              const titleRe  = /class="[^"]*cellMainLink[^"]*"[^>]*>([^<]{4,100})</g;
-              const seedRe   = /class="[^"]*green[^"]*"[^>]*>(\d+)/g;
-
-              const magnets = [...html.matchAll(magnetRe)].map(m => m[1].replace(/&amp;/g, '&'));
-              const hashes  = [...html.matchAll(hashRe)].map(m => m[1]);
-              const titles  = [...html.matchAll(titleRe)].map(m => m[1].trim());
-              const seeds   = [...html.matchAll(seedRe)].map(m => parseInt(m[1]) || 0);
-
-              const count = Math.max(magnets.length, hashes.length);
-              if (count === 0) continue;
-
-              const results = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
-                magnet:   magnets[i] || buildMagnet(hashes[i], titles[i] || `${artist} ${track}`),
-                fileName: titles[i] || `${artist} ${track}`,
-                seeders:  seeds[i] ?? 0,
-                leechers: 0,
-                quality:  detectQuality(titles[i] || ''),
-                source:   'KickassTorrents'
-              })).filter(r => r.magnet);
-
-              if (results.length > 0) {
-                console.log(`  ✓ KickassTorrents (${mirror}): ${results.length} results (${Date.now() - queryStart}ms)`);
-                return results;
-              }
-            } catch (e) {
-              console.log(`  ✗ KickassTorrents (${mirror}): ${e.message?.substring(0, 60)}`);
-            }
+            console.log(`  ✗ TorrentGalaxy: ${e.message?.substring(0, 60)}`);
           }
         }
         return [];
@@ -1157,11 +1204,14 @@ app.use((req, res, next) => {
  * (both album packs and single tracks)
  */
 app.post('/api/sources', async (req, res) => {
-  const { artist, album, track } = req.body;
+  const { artist, album, track, itunesId } = req.body;
 
   if (!artist || !album || !track) {
     return res.status(400).json({ success: false, error: 'Missing artist, album, or track parameter' });
   }
+
+  // Queue this album for background re-indexing (keeps the index fresh)
+  if (itunesId) queueForIndexing(itunesId, artist, album);
 
   try {
     // 1. Fetch/refresh album metadata from MusicBrainz
@@ -1214,57 +1264,55 @@ app.post('/api/sources', async (req, res) => {
 
     // 3. Multi-strategy torrent resolution
     // Strategy A: Search for the exact single track
-    const singleTrackPromise = resolveMusicTorrent(artist, track, album);
+    const singleTrackPromise = resolveMusicTorrent(artist, track, album, itunesId);
 
-    // Strategy B: Search for the full album pack
-    const albumPackPromise = resolveMusicTorrent(artist, album, '');
+    // Strategy B: Search for the full album pack (itunesId lets both paths write to index)
+    const albumPackPromise = resolveMusicTorrent(artist, album, '', itunesId);
 
     const [singleResults, albumResults] = await Promise.allSettled([
       singleTrackPromise, albumPackPromise
     ]);
 
     // 4. Build the source list (Torrentio-style)
+    //    Deduplicate by info-hash across both strategies — same torrent should only
+    //    appear once, labelled as Album Pack if found in both searches.
+    const seenHashes = new Set();
     const sources = [];
 
-    if (singleResults.status === 'fulfilled' && singleResults.value.length > 0) {
-      for (const t of singleResults.value) {
-        sources.push({
-          id: `src-${uuidv4().substring(0, 8)}`,
-          magnet: t.magnet,
-          fileName: t.fileName,
-          seeders: t.seeders,
-          leechers: t.leechers,
-          quality: t.quality || 'Unknown',
-          source: t.source || 'Public Tracker',
-          type: 'single_track',
-          matchConfidence: t.confidence || 'medium'
-        });
-      }
+    const addSource = (t, type) => {
+      const hashMatch = t.magnet?.match(/urn:btih:([a-fA-F0-9]{32,40})/i);
+      const hash = hashMatch ? hashMatch[1].toLowerCase() : t.magnet;
+      if (!hash || seenHashes.has(hash)) return;
+      seenHashes.add(hash);
+      sources.push({
+        id:              `src-${uuidv4().substring(0, 8)}`,
+        magnet:          t.magnet,
+        fileName:        t.fileName,
+        seeders:         t.seeders,
+        leechers:        t.leechers,
+        quality:         t.quality || 'Unknown',
+        source:          t.source || 'Public Tracker',
+        type,
+        matchConfidence: t.confidence || 'medium'
+      });
+    };
+
+    // Album packs first — preferred, gets hash priority for dedup
+    if (albumResults.status === 'fulfilled') {
+      for (const t of (albumResults.value || [])) addSource(t, 'album_pack');
+    }
+    // Single-track results — only added if hash not already seen
+    if (singleResults.status === 'fulfilled') {
+      for (const t of (singleResults.value || [])) addSource(t, 'single_track');
     }
 
-    if (albumResults.status === 'fulfilled' && albumResults.value.length > 0) {
-      for (const t of albumResults.value) {
-        sources.push({
-          id: `src-${uuidv4().substring(0, 8)}`,
-          magnet: t.magnet,
-          fileName: t.fileName,
-          seeders: t.seeders,
-          leechers: t.leechers,
-          quality: t.quality || 'Unknown',
-          source: t.source || 'Public Tracker',
-          type: 'album_pack',
-          matchConfidence: t.confidence || 'medium'
-        });
-      }
-    }
-
-    // Sort: highest seeders first within each type, album packs get slight boost
+    // Sort: seeders desc, album packs get a small boost
     sources.sort((a, b) => {
-      const typeBoost = a.type === 'album_pack' ? 5 : 0;
-      return (b.seeders + typeBoost) - (a.seeders + (b.type === 'album_pack' ? 5 : 0));
+      const boost = (x) => x.seeders + (x.type === 'album_pack' ? 5 : 0);
+      return boost(b) - boost(a);
     });
 
-    console.log(`📡 Sources for "${artist} - ${track}": ${sources.length} options (${sources.filter(s => s.type === 'album_pack').length} album packs, ${sources.filter(s => s.type === 'single_track').length} single tracks)`);
+    console.log(`📡 Sources for "${artist} - ${track}": ${sources.length} unique (${sources.filter(s => s.type === 'album_pack').length} album packs, ${sources.filter(s => s.type === 'single_track').length} single tracks)`);
 
     res.json({
       success: true,
@@ -1292,15 +1340,17 @@ app.post('/api/sources', async (req, res) => {
  * Resolve artist + track → torrent magnet links
  */
 app.post('/api/resolve', async (req, res) => {
-  const { artist, track, album } = req.body;
+  const { artist, track, album, itunesId } = req.body;
 
   if (!artist || !track) {
     return res.status(400).json({ success: false, error: 'Missing artist or track parameter' });
   }
 
+  if (itunesId) queueForIndexing(itunesId, artist, album || track);
+
   try {
     const metadata = await getMusicBrainzMetadata(artist, album || '');
-    const torrents = await resolveMusicTorrent(artist, track, album || '');
+    const torrents = await resolveMusicTorrent(artist, track, album || '', itunesId);
 
     res.json({
       success: true,
@@ -1561,19 +1611,32 @@ app.post('/api/library', (req, res) => {
   }
 
   try {
-    // Ensure album exists in the albums cache
+    // Check for duplicate first — album_id has no DB-level unique constraint
+    // so we guard here to avoid multiple identical entries
+    const existing = db.prepare(
+      'SELECT id FROM user_library WHERE album_id = ?'
+    ).get(id);
+
+    if (existing) {
+      return res.json({ success: true, albumId: id, alreadyInLibrary: true, message: `"${title}" is already in your library` });
+    }
+
+    // Upsert album metadata (cover may have improved since first add)
     db.prepare(
-      `INSERT OR IGNORE INTO albums (id, title, artist, year, cover_url, track_count)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO albums (id, title, artist, year, cover_url, track_count)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         cover_url   = COALESCE(excluded.cover_url, cover_url),
+         track_count = COALESCE(excluded.track_count, track_count)`
     ).run(id, title, artist, year || null, cover || null, trackCount || 0);
 
     // Add to user library
     db.prepare(
-      'INSERT OR IGNORE INTO user_library (id, album_id) VALUES (?, ?)'
+      'INSERT INTO user_library (id, album_id) VALUES (?, ?)'
     ).run(uuidv4(), id);
 
     console.log(`📚 Added to library: ${artist} - ${title}`);
-    res.json({ success: true, albumId: id, message: `Added "${title}" to library` });
+    res.json({ success: true, albumId: id, alreadyInLibrary: false, message: `Added "${title}" to library` });
   } catch (error) {
     console.error('Library add error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1613,7 +1676,7 @@ function extractInfoHash(magnet) {
  * POST /api/stream
  */
 app.post('/api/stream', async (req, res) => {
-  const { magnet, targetTrackTitle } = req.body;
+  const { magnet, targetTrackTitle, trackNumber } = req.body;
 
   if (!magnet) {
     return res.status(400).json({ success: false, error: 'Missing magnet URI' });
@@ -1675,15 +1738,62 @@ app.post('/api/stream', async (req, res) => {
     let audioIndex = 0;
 
     if (engine.files && engine.files.length > 0) {
-      // Step 1: If targetTrackTitle provided (album pack mode), try exact match
+      // Step 1: Intelligent multi-layer track matching for album packs
       if (targetTrackTitle) {
-        const matchIndex = engine.files.findIndex(f =>
-          validExts.some(ext => f.name.toLowerCase().endsWith(ext)) &&
-          f.name.toLowerCase().includes(targetTrackTitle.toLowerCase())
-        );
-        if (matchIndex !== -1) {
-          audioIndex = matchIndex;
-          console.log(`  🎯 Track match: "${targetTrackTitle}" → file index ${audioIndex}`);
+        const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const cleanTarget = normalize(targetTrackTitle);
+        // Strip "feat. X" and parenthetical notes for a cleaner base name to match against
+        const cleanTargetBase = normalize(targetTrackTitle.split('(')[0].split('feat')[0]);
+
+        let bestMatchIndex = -1;
+        let highestScore = 0;
+
+        engine.files.forEach((file, index) => {
+          const isAudio = validExts.some(ext => file.name.toLowerCase().endsWith(ext));
+          if (!isAudio) return;
+
+          const fileNameClean = normalize(file.name);
+          let currentScore = 0;
+
+          // Layer 1a: Base title match (without features/parens) — most reliable string signal
+          if (fileNameClean.includes(cleanTargetBase)) currentScore += 50;
+          // Layer 1b: Full title match (bonus for exact match including feat. suffix)
+          if (fileNameClean.includes(cleanTarget)) currentScore += 20;
+
+          // Layer 2: Track number prefix match — highly reliable for properly-tagged album packs
+          if (trackNumber) {
+            const paddedNum = String(trackNumber).padStart(2, '0'); // "03"
+            const simpleNum = String(trackNumber);                   // "3"
+            if (
+              file.name.toLowerCase().startsWith(paddedNum) ||
+              file.name.toLowerCase().startsWith(simpleNum + ' ') ||
+              file.name.toLowerCase().startsWith(simpleNum + '-') ||
+              file.name.toLowerCase().startsWith(simpleNum + '.')
+            ) {
+              currentScore += 40;
+            }
+          }
+
+          if (currentScore > highestScore) {
+            highestScore = currentScore;
+            bestMatchIndex = index;
+          }
+        });
+
+        if (bestMatchIndex !== -1 && highestScore >= 40) {
+          audioIndex = bestMatchIndex;
+          console.log(`  🎯 Intelligent Track Match: "${targetTrackTitle}" → "${engine.files[audioIndex].name}" (Score: ${highestScore})`);
+        } else if (trackNumber) {
+          // Fallback: sort audio files alphabetically/numerically and select by position
+          const audioFilesOnly = engine.files
+            .map((f, i) => ({ name: f.name, originalIndex: i }))
+            .filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)))
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+          if (audioFilesOnly[trackNumber - 1]) {
+            audioIndex = audioFilesOnly[trackNumber - 1].originalIndex;
+            console.log(`  🔀 Position Fallback: Track #${trackNumber} → "${engine.files[audioIndex].name}"`);
+          }
         }
       }
 
@@ -2320,6 +2430,90 @@ if (isProduction) {
 }
 
 // ─────────────────────────────────────────────────────────
+// BACKGROUND INDEXER  (Torrentio-style async pre-indexing)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * In-memory queue of albums waiting to be indexed.
+ * Each entry: { itunesId, artist, album }
+ * Items are deduplicated by itunesId and processed one at a time
+ * with a delay so we don't hammer trackers.
+ */
+const indexQueue   = new Map();   // itunesId → {itunesId, artist, album}
+let   indexerBusy  = false;
+
+function queueForIndexing(itunesId, artist, album) {
+  if (!itunesId || indexQueue.has(itunesId)) return;
+
+  // Skip if already freshly indexed (< 6 hours old)
+  const fresh = db.prepare(
+    'SELECT COUNT(*) as n FROM torrent_index WHERE itunes_id = ? AND indexed_at > (unixepoch() - 21600)'
+  ).get(itunesId);
+  if (fresh?.n > 0) return;
+
+  indexQueue.set(itunesId, { itunesId, artist, album });
+  console.log(`🗂️  Queued for indexing: ${artist} — ${album} (queue size: ${indexQueue.size})`);
+  if (!indexerBusy) processIndexQueue();
+}
+
+async function processIndexQueue() {
+  if (indexQueue.size === 0) { indexerBusy = false; return; }
+  indexerBusy = true;
+
+  const [itunesId, item] = indexQueue.entries().next().value;
+  indexQueue.delete(itunesId);
+
+  try {
+    console.log(`🔄 Background indexing: ${item.artist} — ${item.album}`);
+    // Background: skip SolidTorrents (save its rate-limit budget for real user requests)
+    // Only use piratebay + knaben for background jobs
+    const results = await resolveMusicTorrent(item.artist, item.album, '', item.itunesId, true);
+    if (results.length > 0) {
+      console.log(`✅ Indexed ${results.length} torrents for ${item.itunesId}`);
+    } else {
+      console.log(`⚠️  No torrents found during background index of ${item.artist} — ${item.album}`);
+    }
+  } catch (e) {
+    console.error(`❌ Background index error for ${item.itunesId}:`, e.message);
+  }
+
+  // Throttle: 10s between index jobs — gives rate-limited APIs time to cool down
+  setTimeout(processIndexQueue, 10000);
+}
+
+/**
+ * Startup indexer — fetches iTunes top-50 albums and queues them all.
+ * This pre-warms the index so the first user to play any popular album
+ * gets an instant ⚡ index hit instead of waiting for live scraping.
+ */
+async function startBackgroundIndexer() {
+  console.log('🌐 Background indexer starting — fetching iTunes top charts...');
+  try {
+    const resp = await axios.get(
+      'https://itunes.apple.com/us/rss/topalbums/limit=50/json',
+      { timeout: 8000 }
+    );
+    const entries = resp.data?.feed?.entry || [];
+    let queued = 0;
+
+    for (const entry of entries) {
+      const artist   = entry['im:artist']?.label;
+      const title    = entry['im:name']?.label;
+      const rawId    = entry.id?.attributes?.['im:id'];
+      if (!artist || !title || !rawId) continue;
+
+      const itunesId = `itunes_${rawId}`;
+      queueForIndexing(itunesId, artist, title);
+      queued++;
+    }
+
+    console.log(`📋 Queued ${queued} albums for background indexing from iTunes top charts`);
+  } catch (e) {
+    console.error('Background indexer fetch error:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 // SERVER STARTUP
 // ─────────────────────────────────────────────────────────
 
@@ -2385,6 +2579,14 @@ async function startServer() {
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
     `);
+
+    // Start the background indexer 8 seconds after server boot
+    // (gives WebTorrent + DB time to fully initialize first)
+    setTimeout(() => {
+      startBackgroundIndexer();
+      // Re-run every 2 hours to keep the index fresh with new releases
+      setInterval(startBackgroundIndexer, 2 * 60 * 60 * 1000);
+    }, 8000);
   }
 
   // Graceful shutdown
