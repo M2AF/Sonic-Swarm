@@ -3,3 +3,4 @@ gemini advice.md
 dist/
 data/
 .env
+sonicswarm-audit.html
