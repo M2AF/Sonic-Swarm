@@ -76,8 +76,8 @@ SonicSwarm has a dark-themed, three-panel interface inspired by the best desktop
 │              │   3  Track Three Queue   2:58  │              │
 │              │                                │              │
 ├──────────────┴────────────────────────────────┴──────────────┤
-│ 🎵 Track Name — Artist                     ↓ 2.4 MB/s  47p   │
-│  ◀◀   ▶   ⏸   ▶▶     ───⬤─────────────     1:23 / 3:42   │
+│ 🎵 Track Name — Artist                    ⚡↓ 2.4 MB/s  47p │
+│  ◀◀   ▶   ⏸   ▶▶     ────⬤────────────     1:23 / 3:42   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -132,48 +132,48 @@ The UI dev server runs on `http://localhost:3000` and proxies API requests to th
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     YOUR BROWSER                         │
+│                     YOUR BROWSER                        │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │              React SPA (Vite)                    │    │
+│  │              React SPA (Vite)                   │    │
 │  │  ┌──────────┐  ┌──────────────┐  ┌──────────┐   │    │
 │  │  │ App.jsx  │  │ SonicSwarm   │  │  CSS     │   │    │
 │  │  │          │  │ Context.jsx  │  │ (Dark)   │   │    │
 │  │  └──────────┘  └──────────────┘  └──────────┘   │    │
 │  └───────────────────┬─────────────────────────────┘    │
-│                      │  HTTP /api/*                      │
+│                      │  HTTP /api/*                     │
 └──────────────────────┼──────────────────────────────────┘
                        │
 ┌──────────────────────┼──────────────────────────────────┐
-│              EXPRESS BACKEND (server.js)                 │
+│              EXPRESS BACKEND (server.js)                │
 │  ┌───────────────────┴─────────────────────────────┐    │
 │  │  Routes: /api/search, /api/sources, /api/stream │    │
 │  │          /api/resolve, /api/health, ...         │    │
 │  └───────────────────┬─────────────────────────────┘    │
-│                      │                                   │
+│                      │                                  │
 │  ┌───────────────────┴─────────────────────────────┐    │
-│  │         BitTorrent Engine (torrent-stream)       │    │
+│  │         BitTorrent Engine (torrent-stream)      │    │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │    │
-│  │  │ Engine 1 │  │ Engine 2 │  │  Engine N...  │   │    │
-│  │  │(infoHash)│  │(infoHash)│  │               │   │    │
+│  │  │ Engine 1 │  │ Engine 2 │  │  Engine N... │   │    │
+│  │  │(infoHash)│  │(infoHash)│  │              │   │    │
 │  │  └────┬─────┘  └────┬─────┘  └──────────────┘   │    │
-│  └───────┼─────────────┼────────────────────────────┘    │
-│          │             │                                  │
-│  ┌───────┴─────────────┴────────────────────────────┐    │
-│  │     SQLite Database (better-sqlite3)              │    │
-│  │  Albums • Tracks • Torrents • Cache • Library     │    │
-│  └──────────────────────────────────────────────────┘    │
+│  └───────┼─────────────┼───────────────────────────┘    │
+│          │             │                                │
+│  ┌───────┴─────────────┴────────────────────────────┐   │
+│  │     SQLite Database (better-sqlite3)             │   │
+│  │  Albums • Tracks • Torrents • Cache • Library    │   │
+│  └──────────────────────────────────────────────────┘   │
 └──────────────────────┬──────────────────────────────────┘
                        │
                        │  TCP/UDP BitTorrent + DHT
                        ▼
-          ┌────────────────────────────┐
-          │   THE GLOBAL P2P SWARM     │
-          │                            │
-          │  🌐 Millions of peers      │
-          │  📦 Billions of files      │
-          │  🔗 Standard BitTorrent    │
-          │                            │
-          └────────────────────────────┘
+          ┌──────────────────────────────┐
+          │     THE GLOBAL P2P SWARM     │
+          │                              │
+          │  🌐 Millions of peers   🌐  │
+          │  📦 Billions of files   📦  │
+          │  🔗 Standard BitTorrent 🔗  │
+          │                              │
+          └──────────────────────────────┘
 ```
 
 ### Key Design Decisions
@@ -268,19 +268,19 @@ When you click a track in the album view, a drawer slides open showing every ava
 │  📡 Aggregated Swarm Streams                         ✕  │
 │──────────────────────────────────────────────────────────│
 │  ┌──────────────────────────────────────────────────┐    │
-│  │ 📦 Album Pack    FLAC                            │    │
+│  │ 📦 Album Pack    FLAC  📦                       │    │
 │  │ Kendrick Lamar - GNX (2024) [24Bit-48kHz] FLAC   │    │
-│  │ via ThePirateBay                     👥 47 seeds │    │
+│  │ via ThePirateBay                  👥🖥️ 47 seeds │    │
 │  └──────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │ 🎵 Single Track  MP3-320                         │    │
+│  │ 🎵 Single Track  MP3-320 🎵                     │    │
 │  │ Kendrick Lamar - squabble up.mp3                 │    │
-│  │ via SolidTorrents                     👥 23 seeds │    │
+│  │ via SolidTorrents                 👥🖥️ 23 seeds │    │
 │  └──────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │ 📦 Album Pack    MP3-V0                          │    │
+│  │ 📦 Album Pack    MP3-V0  📦                     │    │
 │  │ Kendrick Lamar - GNX [MP3-V0] [2024]             │    │
-│  │ via ThePirateBay (album)              👥 31 seeds │    │
+│  │ via ThePirateBay (album)          👥🖥️ 31 seeds │    │
 │  └──────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────┘
 ```
